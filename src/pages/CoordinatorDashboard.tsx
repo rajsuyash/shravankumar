@@ -246,21 +246,19 @@ export const CoordinatorDashboard: React.FC = () => {
                       <Button
                         variant="primary"
                         size="sm"
+                        onClick={() => navigate(`/trip-detail?tripId=${trip.id}`)}
+                      >
+                        <Icon name="dashboard" className="mr-1" />
+                        Manage Trip
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={() => navigate(`/trip-updates?tripId=${trip.id}`)}
                       >
                         <Icon name="photo_library" className="mr-1" />
-                        View Updates
+                        Updates
                       </Button>
-                      {trip.status === 'in_progress' && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => navigate(`/trip-updates?tripId=${trip.id}`)}
-                        >
-                          <Icon name="photo_camera" className="mr-1" />
-                          Post Update
-                        </Button>
-                      )}
                       <Button
                         variant="secondary"
                         size="sm"

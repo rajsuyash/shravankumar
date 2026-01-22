@@ -18,6 +18,7 @@ import { CoordinatorDashboard } from './pages/CoordinatorDashboard';
 import { MedicalTeamDashboard } from './pages/MedicalTeamDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { TripUpdatesPage } from './pages/TripUpdatesPage';
+import { TripDetailPage } from './pages/TripDetailPage';
 import { SafetyVowsPage } from './pages/SafetyVowsPage';
 
 function App() {
@@ -42,6 +43,7 @@ function App() {
               <Route path="/medical" element={<ProtectedRoute><MedicalTeamDashboard /></ProtectedRoute>} />
               <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
               <Route path="/trip-updates" element={<ProtectedRoute><TripUpdatesPage /></ProtectedRoute>} />
+              <Route path="/trip-detail" element={<ProtectedRoute><TripDetailPage /></ProtectedRoute>} />
               <Route path="/safety-vows" element={<SafetyVowsPage />} />
               <Route path="*" element={<HomePage />} />
             </Routes>
