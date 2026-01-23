@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create Admin User - Shravan Kumar</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #c1502e; }
+        .form-group {
+            margin: 20px 0;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #c1502e;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #a03d1f;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .credentials {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            border: 2px solid #ffc107;
+        }
+        .credentials h3 {
+            margin-top: 0;
+            color: #856404;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Create Admin User</h1>
+
+        <div class="info">
+            <strong>📝 Instructions:</strong><br>
+            This page will create an admin user for your Shravan Kumar app using your existing Supabase credentials.
+            No dashboard access required!
+        </div>
+
+        <div class="form-group">
+            <label>Admin Email:</label>
+            <input type="email" id="email" value="admin@shravankumar.com" placeholder="admin@shravankumar.com">
+        </div>
+
+        <div class="form-group">
+            <label>Admin Password:</label>
+            <input type="password" id="password" value="TestAdmin@2024" placeholder="Minimum 6 characters">
+        </div>
+
+        <div class="form-group">
+            <label>First Name:</label>
+            <input type="text" id="firstName" value="Test" placeholder="First Name">
+        </div>
+
+        <div class="form-group">
+            <label>Last Name:</label>
+            <input type="text" id="lastName" value="Administrator" placeholder="Last Name">
+        </div>
+
+        <button id="createBtn" onclick="createAdmin()">Create Admin User</button>
+
+        <div id="result" class="result"></div>
+
+        <div id="credentials" class="credentials" style="display:none;">
+            <h3>✅ Admin Created Successfully!</h3>
+            <p><strong>Email:</strong> <code id="createdEmail"></code></p>
+            <p><strong>Password:</strong> <code id="createdPassword"></code></p>
+            <p><strong>Login URL:</strong> <a href="https://shravankumar-six.vercel.app/login" target="_blank">https://shravankumar-six.vercel.app/login</a></p>
+            <p><strong>Dashboard URL:</strong> <a href="https://shravankumar-six.vercel.app/coordinator" target="_blank">https://shravankumar-six.vercel.app/coordinator</a></p>
+        </div>
+    </div>
+
+    <script>
+        // Supabase credentials from your .env file
+        const SUPABASE_URL = 'https://upijoacbruyvodrfredz.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVwaWpvYWNicnV5dm9kcmZyZWR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkxMDQ5NTcsImV4cCI6MjA4NDY4MDk1N30.tFv7RMjRetZso5RhRrOYnILQteYZzOhaXCZ0Eo3HTHA';
+
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        async function createAdmin() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const firstName = document.getElementById('firstName').value;
+            const lastName = document.getElementById('lastName').value;
+            const resultDiv = document.getElementById('result');
+            const credentialsDiv = document.getElementById('credentials');
+            const createBtn = document.getElementById('createBtn');
+
+            // Validation
+            if (!email || !password || !firstName || !lastName) {
+                showResult('Please fill in all fields', 'error');
+                return;
+            }
+
+            if (password.length < 6) {
+                showResult('Password must be at least 6 characters', 'error');
+                return;
+            }
+
+            createBtn.disabled = true;
+            createBtn.textContent = 'Creating...';
+            resultDiv.style.display = 'none';
+            credentialsDiv.style.display = 'none';
+
+            try {
+                // Step 1: Sign up the user
+                console.log('Creating auth user...');
+                const { data: authData, error: authError } = await supabase.auth.signUp({
+                    email: email,
+                    password: password,
+                    options: {
+                        data: {
+                            first_name: firstName,
+                            last_name: lastName
+                        }
+                    }
+                });
+
+                if (authError) {
+                    throw new Error(`Auth error: ${authError.message}`);
+                }
+
+                if (!authData.user) {
+                    throw new Error('User creation failed - no user data returned');
+                }
+
+                console.log('Auth user created:', authData.user.id);
+
+                // Step 2: Insert into users table with admin role
+                console.log('Adding user to database...');
+                const { data: userData, error: userError } = await supabase
+                    .from('users')
+                    .insert({
+                        id: authData.user.id,
+                        email: email,
+                        phone: '+919876543210',
+                        first_name: firstName,
+                        last_name: lastName,
+                        user_type: 'admin'
+                    })
+                    .select()
+                    .single();
+
+                if (userError) {
+                    // Try to update if insert fails (user might exist)
+                    console.log('User exists, trying to update...');
+                    const { data: updateData, error: updateError } = await supabase
+                        .from('users')
+                        .update({
+                            user_type: 'admin',
+                            first_name: firstName,
+                            last_name: lastName
+                        })
+                        .eq('id', authData.user.id)
+                        .select()
+                        .single();
+
+                    if (updateError) {
+                        throw new Error(`Database error: ${updateError.message}`);
+                    }
+                    console.log('User updated successfully');
+                } else {
+                    console.log('User inserted successfully');
+                }
+
+                // Success!
+                showResult('✅ Admin user created successfully!', 'success');
+                document.getElementById('createdEmail').textContent = email;
+                document.getElementById('createdPassword').textContent = password;
+                credentialsDiv.style.display = 'block';
+
+                // Sign out the newly created user
+                await supabase.auth.signOut();
+
+            } catch (error) {
+                console.error('Error:', error);
+                showResult(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                createBtn.disabled = false;
+                createBtn.textContent = 'Create Admin User';
+            }
+        }
+
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = 'result ' + type;
+            resultDiv.style.display = 'block';
+        }
+
+        // Check connection on load
+        window.onload = async () => {
+            try {
+                const { data, error } = await supabase.from('users').select('count').limit(1);
+                if (!error) {
+                    console.log('✅ Successfully connected to Supabase');
+                }
+            } catch (e) {
+                console.error('Connection test failed:', e);
+            }
+        };
+    </script>
+</body>
+</html>
