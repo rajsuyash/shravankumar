@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Circuit } from '../types/database';
 import { supabase } from '../lib/supabase';
-import { Icon, Button, Badge } from '../components/ui';
+import { Icon, Button } from '../components/ui';
 
 export const CircuitDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();

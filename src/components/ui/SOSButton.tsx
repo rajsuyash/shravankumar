@@ -7,7 +7,7 @@ interface SOSButtonProps {
   bookingId?: string;
 }
 
-export const SOSButton: React.FC<SOSButtonProps> = ({ onEmergency, bookingId }) => {
+export const SOSButton: React.FC<SOSButtonProps> = ({ onEmergency }) => {
   const [showConfirm, setShowConfirm] = useState(false);
   const [countdown, setCountdown] = useState(10);
   const [confirmed, setConfirmed] = useState(false);

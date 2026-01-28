@@ -16,7 +16,7 @@ export const LoginPage = () => {
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  const from = (location.state as any)?.from?.pathname || '/';
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/';
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();

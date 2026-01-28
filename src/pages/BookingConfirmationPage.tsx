@@ -4,6 +4,14 @@ import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
 
+interface TravelerDetail {
+  firstName: string;
+  lastName: string;
+  age: number;
+  email: string;
+  phone?: string;
+}
+
 interface Booking {
   id: string;
   booking_reference: string;
@@ -11,7 +19,7 @@ interface Booking {
   return_date: string;
   number_of_travelers: number;
   total_price: number;
-  traveler_details: any[];
+  traveler_details: TravelerDetail[];
   circuits: {
     name: string;
     starts_from_city: string;
@@ -136,7 +144,7 @@ export const BookingConfirmationPage: React.FC = () => {
             <div className="p-4 border border-gray-200 rounded-lg">
               <p className="text-sm text-gray-500 mb-2">Travelers</p>
               <div className="space-y-2">
-                {booking.traveler_details.map((traveler: any, index: number) => (
+                {booking.traveler_details.map((traveler: TravelerDetail, index: number) => (
                   <div key={index} className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-primary/10 rounded-full flex items-center justify-center">
                       <Icon name="person" className="text-primary text-sm" />

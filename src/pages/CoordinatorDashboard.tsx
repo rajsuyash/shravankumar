@@ -1,8 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Icon, Button, Badge } from '../components/ui';
+import { Icon, Button } from '../components/ui';
 import { format } from 'date-fns';
+
+interface TravelerDetail {
+  firstName: string;
+  lastName: string;
+  age: number;
+  email: string;
+  phone?: string;
+}
 
 interface Trip {
   id: string;
@@ -17,7 +25,7 @@ interface Trip {
   bookings: Array<{
     id: string;
     booking_reference: string;
-    traveler_details: any[];
+    traveler_details: TravelerDetail[];
   }>;
 }
 

@@ -3,6 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useBooking } from '../contexts/BookingContext';
 import { Button, Icon } from '../components/ui';
 
+interface MedicalAssessmentData {
+  chronicDiseases: string[];
+  medications: string[];
+  allergies: string;
+  mobilityLevel: string;
+  oxygenRequired: boolean;
+  dietaryRestrictions: string;
+}
+
 const commonDiseases = [
   'Diabetes',
   'Hypertension',
@@ -24,7 +33,7 @@ export const MedicalAssessmentPage: React.FC = () => {
   const { bookingData, updateBookingData } = useBooking();
   const [currentTravelerIndex, setCurrentTravelerIndex] = useState(0);
 
-  const [assessments, setAssessments] = useState<{ [key: number]: any }>(
+  const [assessments, setAssessments] = useState<{ [key: number]: MedicalAssessmentData }>(
     bookingData.medicalAssessments || {}
   );
 
@@ -197,7 +206,7 @@ export const MedicalAssessmentPage: React.FC = () => {
               </div>
               {currentAssessment.medications.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {currentAssessment.medications.map((med, index) => (
+                  {currentAssessment.medications.map((med: string, index: number) => (
                     <div
                       key={index}
                       className="flex items-center gap-2 bg-green-50 px-3 py-2 rounded-lg border border-green-200"

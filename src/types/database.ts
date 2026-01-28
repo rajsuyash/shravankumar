@@ -16,8 +16,8 @@ export interface Circuit {
   included_services: string[];
   excluded_services?: string[];
   medical_support_details: string;
-  accommodation_details?: any[];
-  transportation_details?: any[];
+  accommodation_details?: AccommodationDetail[];
+  transportation_details?: TransportationDetail[];
   cancellation_policy?: string;
   is_active: boolean;
   created_at: string;
@@ -69,7 +69,7 @@ export interface User {
   user_type: 'customer' | 'pilgrim' | 'staff' | 'admin' | 'medical_team';
   profile_photo_url?: string;
   emergency_contacts: EmergencyContact[];
-  health_profile: any;
+  health_profile: HealthProfile | null;
   created_at: string;
   updated_at: string;
 }
@@ -123,4 +123,31 @@ export interface Medication {
   dosage: string;
   frequency: string;
   purpose?: string;
+}
+
+export interface AccommodationDetail {
+  hotelName: string;
+  address?: string;
+  checkIn?: string;
+  checkOut?: string;
+  roomType?: string;
+  amenities?: string[];
+}
+
+export interface TransportationDetail {
+  vehicleType: string;
+  vehicleNumber?: string;
+  driverName?: string;
+  driverContact?: string;
+  pickupPoint?: string;
+  dropPoint?: string;
+}
+
+export interface HealthProfile {
+  chronicDiseases?: string[];
+  medications?: string[];
+  allergies?: string;
+  mobilityLevel?: 'full' | 'limited' | 'wheelchair' | 'bed_ridden';
+  oxygenRequired?: boolean;
+  dietaryRestrictions?: string;
 }

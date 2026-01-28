@@ -4,6 +4,32 @@ import { Icon, Button } from '../components/ui';
 import { format } from 'date-fns';
 import { uploadCircuitImage, deleteCircuitImage } from '../lib/imageUpload';
 
+interface CircuitItem {
+  id: string;
+  name: string;
+  description?: string;
+  duration_days: number;
+  base_price: number;
+  destinations?: string[];
+  departure_cities?: string[];
+  display_order?: number;
+  is_active: boolean;
+  featured_image_url?: string;
+  images?: string[];
+}
+
+interface BookingItem {
+  id: string;
+  booking_reference: string;
+  departure_date: string;
+  number_of_travelers: number;
+  total_price: number;
+  booking_status: string;
+  circuits?: {
+    name: string;
+  };
+}
+
 export const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState({
     totalBookings: 0,
@@ -13,11 +39,11 @@ export const AdminDashboard: React.FC = () => {
     pendingAssessments: 0,
     activeTrips: 0,
   });
-  const [recentBookings, setRecentBookings] = useState<any[]>([]);
-  const [circuits, setCircuits] = useState<any[]>([]);
+  const [recentBookings, setRecentBookings] = useState<BookingItem[]>([]);
+  const [circuits, setCircuits] = useState<CircuitItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingCircuit, setEditingCircuit] = useState<any>(null);
+  const [editingCircuit, setEditingCircuit] = useState<CircuitItem | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -101,7 +127,7 @@ export const AdminDashboard: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleEditCircuit = (circuit: any) => {
+  const handleEditCircuit = (circuit: CircuitItem) => {
     setEditingCircuit(circuit);
     setFormData({
       name: circuit.name,
@@ -179,7 +205,7 @@ export const AdminDashboard: React.FC = () => {
       };
 
       if (editingCircuit) {
-        const { data, error, count } = await supabase
+        const { data, error } = await supabase
           .from('circuits')
           .update(circuitData)
           .eq('id', editingCircuit.id)
@@ -217,9 +243,9 @@ export const AdminDashboard: React.FC = () => {
       await fetchDashboardData();
 
       alert(`Circuit ${editingCircuit ? 'updated' : 'created'} successfully!`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error saving circuit:', error);
-      const errorMessage = error?.message || 'Unknown error occurred';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       alert(`Failed to ${editingCircuit ? 'update' : 'create'} circuit: ${errorMessage}`);
     } finally {
       setUploadingImage(false);

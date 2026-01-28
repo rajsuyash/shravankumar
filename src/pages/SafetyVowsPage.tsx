@@ -1,11 +1,7 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/ui/Icon';
-import { Button } from '../components/ui/Button';
 
 export const SafetyVowsPage: React.FC = () => {
-  const navigate = useNavigate();
-
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden">
       {/* Hero Section */}

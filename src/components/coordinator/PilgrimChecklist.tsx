@@ -16,6 +16,7 @@ interface PilgrimChecklistItem {
   medical_clearance_verified: boolean;
   medical_clearance_verified_at: string | null;
   documents_verified: boolean;
+  documents_verified_at: string | null;
   payment_verified: boolean;
   special_needs_flagged: boolean;
   special_needs_notes: string | null;
@@ -100,7 +101,7 @@ export const PilgrimChecklist: React.FC<PilgrimChecklistProps> = ({ tripId }) =>
   ) => {
     try {
       setUpdatingId(pilgrimId);
-      const updateData: any = { [field]: value };
+      const updateData: Record<string, boolean | string | null> = { [field]: value };
 
       if (value) {
         updateData[`${field}_at`] = new Date().toISOString();

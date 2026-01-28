@@ -51,7 +51,7 @@ export const PaymentPage: React.FC = () => {
         is_primary: true,
       });
 
-      const medicalAssessmentPromises = bookingData.travelers.map((traveler, index) => {
+      const medicalAssessmentPromises = bookingData.travelers.map((_traveler, index) => {
         const assessment = bookingData.medicalAssessments[index];
         return supabase.from('medical_assessments').insert({
           booking_id: booking.id,

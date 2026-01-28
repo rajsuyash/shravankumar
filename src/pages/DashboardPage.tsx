@@ -2,8 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Button, Icon, Badge } from '../components/ui';
+import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
+
+interface TravelerDetail {
+  firstName: string;
+  lastName: string;
+  age: number;
+  email: string;
+  phone?: string;
+}
 
 interface Booking {
   id: string;
@@ -14,7 +22,7 @@ interface Booking {
   total_price: number;
   payment_status: string;
   booking_status: string;
-  traveler_details: any[];
+  traveler_details: TravelerDetail[];
   circuits: {
     name: string;
     duration_days: number;

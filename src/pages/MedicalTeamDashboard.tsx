@@ -7,7 +7,7 @@ interface MedicalAssessment {
   id: string;
   booking_id: string;
   chronic_diseases: string[];
-  medications: any[];
+  medications: string[];
   allergies: string;
   mobility_level: string;
   oxygen_required: boolean;
