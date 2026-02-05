@@ -6,12 +6,193 @@ import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
 
+// Razorpay types
+declare global {
+  interface Window {
+    Razorpay: new (options: RazorpayOptions) => RazorpayInstance;
+  }
+}
+
+interface RazorpayOptions {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  image?: string;
+  order_id?: string;
+  prefill?: {
+    name?: string;
+    email?: string;
+    contact?: string;
+  };
+  notes?: Record<string, string>;
+  theme?: {
+    color?: string;
+  };
+  handler: (response: RazorpayResponse) => void;
+  modal?: {
+    ondismiss?: () => void;
+  };
+}
+
+interface RazorpayResponse {
+  razorpay_payment_id: string;
+  razorpay_order_id?: string;
+  razorpay_signature?: string;
+}
+
+interface RazorpayInstance {
+  open: () => void;
+  close: () => void;
+}
+
 export const PaymentPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { bookingData, resetBooking } = useBooking();
   const [processing, setProcessing] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<'razorpay' | 'demo'>('razorpay');
+
+  const razorpayKeyId = import.meta.env.VITE_RAZORPAY_KEY_ID;
+  const isRazorpayConfigured = !!razorpayKeyId && razorpayKeyId !== 'your_razorpay_key_id';
+
+  const createBookingInDatabase = async (paymentId: string, paymentMethod: string) => {
+    const bookingReference = `SK${Date.now().toString().slice(-8)}`;
+
+    const { data: booking, error: bookingError } = await supabase
+      .from('bookings')
+      .insert({
+        booking_reference: bookingReference,
+        customer_id: user!.id,
+        circuit_id: bookingData.circuitId,
+        departure_date: bookingData.departureDate,
+        return_date: bookingData.returnDate,
+        number_of_travelers: bookingData.numberOfTravelers,
+        total_price: bookingData.totalPrice,
+        payment_status: 'completed',
+        booking_status: 'confirmed',
+        traveler_details: bookingData.travelers,
+        special_requirements: bookingData.specialRequirements,
+      })
+      .select()
+      .single();
+
+    if (bookingError) throw bookingError;
+
+    // Create emergency contact
+    await supabase.from('emergency_contacts').insert({
+      booking_id: booking.id,
+      name: bookingData.emergencyContact.name,
+      relationship: bookingData.emergencyContact.relationship,
+      phone: bookingData.emergencyContact.phone,
+      email: bookingData.emergencyContact.email,
+      is_primary: true,
+    });
+
+    // Create medical assessments for each traveler
+    const medicalAssessmentPromises = bookingData.travelers.map((_traveler, index) => {
+      const assessment = bookingData.medicalAssessments[index];
+      return supabase.from('medical_assessments').insert({
+        booking_id: booking.id,
+        pilgrim_id: user!.id,
+        chronic_diseases: assessment?.chronicDiseases || [],
+        medications: assessment?.medications || [],
+        allergies: assessment?.allergies || '',
+        mobility_level: assessment?.mobilityLevel || 'full',
+        oxygen_required: assessment?.oxygenRequired || false,
+        dietary_restrictions: assessment?.dietaryRestrictions || '',
+        medical_clearance: false,
+        flagged_high_risk: false,
+      });
+    });
+
+    await Promise.all(medicalAssessmentPromises);
+
+    // Record payment
+    await supabase.from('payments').insert({
+      booking_id: booking.id,
+      amount: bookingData.totalPrice,
+      payment_method: paymentMethod,
+      razorpay_payment_id: paymentId,
+      payment_status: 'success',
+    });
+
+    return bookingReference;
+  };
+
+  const handleRazorpayPayment = () => {
+    if (!isRazorpayConfigured) {
+      alert('Razorpay is not configured. Please use demo mode or configure Razorpay.');
+      return;
+    }
+
+    const primaryTraveler = bookingData.travelers[0];
+    
+    const options: RazorpayOptions = {
+      key: razorpayKeyId,
+      amount: bookingData.totalPrice * 100, // Razorpay expects amount in paise
+      currency: 'INR',
+      name: 'Shravan Kumar',
+      description: `Booking: ${bookingData.circuitName}`,
+      image: '/logo.png',
+      prefill: {
+        name: `${primaryTraveler.firstName} ${primaryTraveler.lastName}`,
+        email: primaryTraveler.email,
+        contact: primaryTraveler.phone,
+      },
+      notes: {
+        circuit_name: bookingData.circuitName,
+        travelers: String(bookingData.numberOfTravelers),
+        departure_date: bookingData.departureDate,
+      },
+      theme: {
+        color: '#C45500',
+      },
+      handler: async (response: RazorpayResponse) => {
+        setProcessing(true);
+        try {
+          const bookingRef = await createBookingInDatabase(
+            response.razorpay_payment_id,
+            'razorpay'
+          );
+          navigate(`/booking/confirmation?ref=${bookingRef}`);
+          resetBooking();
+        } catch (error) {
+          console.error('Error creating booking:', error);
+          alert('Payment successful but booking creation failed. Please contact support.');
+        } finally {
+          setProcessing(false);
+        }
+      },
+      modal: {
+        ondismiss: () => {
+          setProcessing(false);
+        },
+      },
+    };
+
+    const razorpay = new window.Razorpay(options);
+    razorpay.open();
+  };
+
+  const handleDemoPayment = async () => {
+    setProcessing(true);
+    try {
+      // Simulate payment delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const bookingRef = await createBookingInDatabase('DEMO_' + Date.now(), 'demo');
+      navigate(`/booking/confirmation?ref=${bookingRef}`);
+      resetBooking();
+    } catch (error) {
+      console.error('Error creating booking:', error);
+      alert('There was an error processing your booking. Please try again.');
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   const handlePayment = async () => {
     if (!agreedToTerms) {
@@ -19,79 +200,16 @@ export const PaymentPage: React.FC = () => {
       return;
     }
 
-    // Require authentication for booking
     if (!user) {
       alert('Please sign in to complete your booking');
       navigate('/login?redirect=/booking/payment');
       return;
     }
 
-    setProcessing(true);
-
-    try {
-      const bookingReference = `SK${Date.now().toString().slice(-8)}`;
-
-      const { data: booking, error: bookingError } = await supabase
-        .from('bookings')
-        .insert({
-          booking_reference: bookingReference,
-          customer_id: user.id,
-          circuit_id: bookingData.circuitId,
-          departure_date: bookingData.departureDate,
-          return_date: bookingData.returnDate,
-          number_of_travelers: bookingData.numberOfTravelers,
-          total_price: bookingData.totalPrice,
-          payment_status: 'completed',
-          booking_status: 'confirmed',
-          traveler_details: bookingData.travelers,
-          special_requirements: bookingData.specialRequirements,
-        })
-        .select()
-        .single();
-
-      if (bookingError) throw bookingError;
-
-      await supabase.from('emergency_contacts').insert({
-        booking_id: booking.id,
-        name: bookingData.emergencyContact.name,
-        relationship: bookingData.emergencyContact.relationship,
-        phone: bookingData.emergencyContact.phone,
-        email: bookingData.emergencyContact.email,
-        is_primary: true,
-      });
-
-      const medicalAssessmentPromises = bookingData.travelers.map((_traveler, index) => {
-        const assessment = bookingData.medicalAssessments[index];
-        return supabase.from('medical_assessments').insert({
-          booking_id: booking.id,
-          pilgrim_id: user.id,
-          chronic_diseases: assessment?.chronicDiseases || [],
-          medications: assessment?.medications || [],
-          allergies: assessment?.allergies || '',
-          mobility_level: assessment?.mobilityLevel || 'full',
-          oxygen_required: assessment?.oxygenRequired || false,
-          dietary_restrictions: assessment?.dietaryRestrictions || '',
-          medical_clearance: false,
-          flagged_high_risk: false,
-        });
-      });
-
-      await Promise.all(medicalAssessmentPromises);
-
-      await supabase.from('payments').insert({
-        booking_id: booking.id,
-        amount: bookingData.totalPrice,
-        payment_method: 'demo',
-        payment_status: 'success',
-      });
-
-      navigate(`/booking/confirmation?ref=${bookingReference}`);
-      resetBooking();
-    } catch (error) {
-      console.error('Error creating booking:', error);
-      alert('There was an error processing your booking. Please try again.');
-    } finally {
-      setProcessing(false);
+    if (paymentMode === 'razorpay' && isRazorpayConfigured) {
+      handleRazorpayPayment();
+    } else {
+      handleDemoPayment();
     }
   };
 
@@ -130,19 +248,63 @@ export const PaymentPage: React.FC = () => {
               </div>
 
               <div className="space-y-6">
-                <div className="p-6 border-2 border-primary rounded-lg bg-primary/5">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
+                {/* Payment Mode Selection */}
+                <div className="space-y-3">
+                  <p className="font-medium text-gray-700">Select Payment Method</p>
+                  
+                  <label 
+                    className={`flex items-center p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      paymentMode === 'razorpay' 
+                        ? 'border-primary bg-primary/5' 
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="razorpay"
+                      checked={paymentMode === 'razorpay'}
+                      onChange={() => setPaymentMode('razorpay')}
+                      className="mr-3"
+                    />
+                    <div className="flex items-center gap-3 flex-1">
                       <Icon name="payment" className="text-primary text-2xl" />
                       <div>
                         <p className="font-bold text-[#181410]">Pay with Card / UPI / Net Banking</p>
-                        <p className="text-sm text-gray-600">Powered by Razorpay</p>
+                        <p className="text-sm text-gray-600">
+                          {isRazorpayConfigured ? 'Powered by Razorpay' : 'Razorpay not configured - will use demo mode'}
+                        </p>
                       </div>
                     </div>
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    Click the button below to proceed to our secure payment gateway
-                  </p>
+                    {!isRazorpayConfigured && (
+                      <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded">Demo</span>
+                    )}
+                  </label>
+
+                  <label 
+                    className={`flex items-center p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                      paymentMode === 'demo' 
+                        ? 'border-primary bg-primary/5' 
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="demo"
+                      checked={paymentMode === 'demo'}
+                      onChange={() => setPaymentMode('demo')}
+                      className="mr-3"
+                    />
+                    <div className="flex items-center gap-3 flex-1">
+                      <Icon name="science" className="text-amber-600 text-2xl" />
+                      <div>
+                        <p className="font-bold text-[#181410]">Demo Mode (Testing)</p>
+                        <p className="text-sm text-gray-600">Skip payment for testing purposes</p>
+                      </div>
+                    </div>
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded">Test</span>
+                  </label>
                 </div>
 
                 <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
@@ -205,7 +367,7 @@ export const PaymentPage: React.FC = () => {
                   ) : (
                     <>
                       <Icon name="lock" className="mr-2" />
-                      Proceed to Secure Payment - ₹{bookingData.totalPrice.toLocaleString()}
+                      {paymentMode === 'demo' ? 'Complete Booking (Demo)' : 'Pay Now'} - ₹{bookingData.totalPrice.toLocaleString()}
                     </>
                   )}
                 </Button>
