@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Icon, Button } from '../components/ui';
-import { format } from 'date-fns';
+import { format, addDays } from 'date-fns';
 
 interface TravelerDetail {
   firstName: string;
@@ -19,6 +20,7 @@ interface Trip {
   status: string;
   group_size: number;
   circuits: {
+    id: string;
     name: string;
     duration_days: number;
   };
@@ -29,14 +31,31 @@ interface Trip {
   }>;
 }
 
+interface CircuitOption {
+  id: string;
+  name: string;
+  duration_days: number;
+}
+
 export const CoordinatorDashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [circuits, setCircuits] = useState<CircuitOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'active' | 'completed'>('active');
+  
+  // Create Trip Modal State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [tripForm, setTripForm] = useState({
+    circuit_id: '',
+    departure_date: '',
+  });
 
   useEffect(() => {
     fetchTrips();
+    fetchCircuits();
   }, []);
 
   const fetchTrips = async () => {
@@ -47,6 +66,7 @@ export const CoordinatorDashboard: React.FC = () => {
         .select(`
           *,
           circuits (
+            id,
             name,
             duration_days
           )
@@ -59,6 +79,84 @@ export const CoordinatorDashboard: React.FC = () => {
       console.error('Error fetching trips:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCircuits = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('circuits')
+        .select('id, name, duration_days')
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) throw error;
+      setCircuits(data || []);
+    } catch (error) {
+      console.error('Error fetching circuits:', error);
+    }
+  };
+
+  const handleCreateTrip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!tripForm.circuit_id || !tripForm.departure_date) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    const selectedCircuit = circuits.find(c => c.id === tripForm.circuit_id);
+    if (!selectedCircuit) {
+      alert('Please select a valid circuit');
+      return;
+    }
+
+    setCreating(true);
+
+    try {
+      const returnDate = format(
+        addDays(new Date(tripForm.departure_date), selectedCircuit.duration_days - 1),
+        'yyyy-MM-dd'
+      );
+
+      const { error } = await supabase
+        .from('trips')
+        .insert({
+          circuit_id: tripForm.circuit_id,
+          departure_date: tripForm.departure_date,
+          return_date: returnDate,
+          coordinator_id: user?.id,
+          status: 'planned',
+          group_size: 0,
+        });
+
+      if (error) throw error;
+
+      setIsCreateModalOpen(false);
+      setTripForm({ circuit_id: '', departure_date: '' });
+      fetchTrips();
+      alert('Trip created successfully!');
+    } catch (error) {
+      console.error('Error creating trip:', error);
+      alert('Failed to create trip. Please try again.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const updateTripStatus = async (tripId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from('trips')
+        .update({ status: newStatus })
+        .eq('id', tripId);
+
+      if (error) throw error;
+      fetchTrips();
+      alert(`Trip status updated to ${newStatus.replace('_', ' ')}`);
+    } catch (error) {
+      console.error('Error updating trip status:', error);
+      alert('Failed to update trip status');
     }
   };
 
@@ -91,6 +189,7 @@ export const CoordinatorDashboard: React.FC = () => {
   };
 
   const filteredTrips = filterTrips(trips);
+  const minDate = format(addDays(new Date(), 7), 'yyyy-MM-dd');
 
   return (
     <div className="min-h-screen bg-background-light py-8">
@@ -101,7 +200,7 @@ export const CoordinatorDashboard: React.FC = () => {
               <h1 className="text-4xl font-bold text-[#181410] mb-2">Trip Coordinator Dashboard</h1>
               <p className="text-gray-600">Manage and coordinate pilgrim journeys</p>
             </div>
-            <Button variant="primary" onClick={() => alert('Create new trip feature coming soon')}>
+            <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>
               <Icon name="add" className="mr-2" />
               Create New Trip
             </Button>
@@ -250,7 +349,7 @@ export const CoordinatorDashboard: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         variant="primary"
                         size="sm"
@@ -275,6 +374,30 @@ export const CoordinatorDashboard: React.FC = () => {
                         <Icon name="chat" className="mr-1" />
                         Messages
                       </Button>
+                      
+                      {/* Status Update Buttons */}
+                      {trip.status === 'planned' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => updateTripStatus(trip.id, 'in_progress')}
+                          className="bg-green-50 text-green-700 hover:bg-green-100"
+                        >
+                          <Icon name="play_arrow" className="mr-1" />
+                          Start Trip
+                        </Button>
+                      )}
+                      {trip.status === 'in_progress' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => updateTripStatus(trip.id, 'completed')}
+                          className="bg-blue-50 text-blue-700 hover:bg-blue-100"
+                        >
+                          <Icon name="check" className="mr-1" />
+                          Complete Trip
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -288,11 +411,123 @@ export const CoordinatorDashboard: React.FC = () => {
                   {activeTab === 'active' && "No trips currently in progress"}
                   {activeTab === 'completed' && "No completed trips"}
                 </p>
+                {activeTab === 'upcoming' && (
+                  <Button variant="primary" onClick={() => setIsCreateModalOpen(true)}>
+                    <Icon name="add" className="mr-2" />
+                    Create Your First Trip
+                  </Button>
+                )}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Create Trip Modal */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-8">
+            <div className="flex items-start justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold text-[#181410]">Create New Trip</h2>
+                <p className="text-gray-600 text-sm mt-1">Schedule a new pilgrimage journey</p>
+              </div>
+              <button 
+                onClick={() => setIsCreateModalOpen(false)} 
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <Icon name="close" className="text-2xl" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateTrip} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Circuit *
+                </label>
+                <select
+                  value={tripForm.circuit_id}
+                  onChange={(e) => setTripForm({ ...tripForm, circuit_id: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  required
+                >
+                  <option value="">Choose a pilgrimage circuit</option>
+                  {circuits.map((circuit) => (
+                    <option key={circuit.id} value={circuit.id}>
+                      {circuit.name} ({circuit.duration_days} days)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Departure Date *
+                </label>
+                <input
+                  type="date"
+                  min={minDate}
+                  value={tripForm.departure_date}
+                  onChange={(e) => setTripForm({ ...tripForm, departure_date: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Trips must be scheduled at least 7 days in advance
+                </p>
+              </div>
+
+              {tripForm.circuit_id && tripForm.departure_date && (
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <p className="text-sm text-blue-800">
+                    <Icon name="info" className="inline mr-1" />
+                    Return date will be automatically set to{' '}
+                    <strong>
+                      {format(
+                        addDays(
+                          new Date(tripForm.departure_date),
+                          (circuits.find(c => c.id === tripForm.circuit_id)?.duration_days || 1) - 1
+                        ),
+                        'MMM dd, yyyy'
+                      )}
+                    </strong>
+                  </p>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="flex-1"
+                  disabled={creating}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  className="flex-1"
+                  disabled={creating}
+                >
+                  {creating ? (
+                    <>
+                      <Icon name="progress_activity" className="mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="add" className="mr-2" />
+                      Create Trip
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

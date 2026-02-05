@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useBooking } from '../contexts/BookingContext';
+import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
 
 export const PaymentPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { bookingData, resetBooking } = useBooking();
   const [processing, setProcessing] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
@@ -17,16 +19,23 @@ export const PaymentPage: React.FC = () => {
       return;
     }
 
+    // Require authentication for booking
+    if (!user) {
+      alert('Please sign in to complete your booking');
+      navigate('/login?redirect=/booking/payment');
+      return;
+    }
+
     setProcessing(true);
 
     try {
-      const bookingReference = `BK${Date.now().toString().slice(-8)}`;
+      const bookingReference = `SK${Date.now().toString().slice(-8)}`;
 
       const { data: booking, error: bookingError } = await supabase
         .from('bookings')
         .insert({
           booking_reference: bookingReference,
-          customer_id: '00000000-0000-0000-0000-000000000000',
+          customer_id: user.id,
           circuit_id: bookingData.circuitId,
           departure_date: bookingData.departureDate,
           return_date: bookingData.returnDate,
@@ -55,7 +64,7 @@ export const PaymentPage: React.FC = () => {
         const assessment = bookingData.medicalAssessments[index];
         return supabase.from('medical_assessments').insert({
           booking_id: booking.id,
-          pilgrim_id: '00000000-0000-0000-0000-000000000000',
+          pilgrim_id: user.id,
           chronic_diseases: assessment?.chronicDiseases || [],
           medications: assessment?.medications || [],
           allergies: assessment?.allergies || '',
