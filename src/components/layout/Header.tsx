@@ -73,6 +73,16 @@ export const Header: React.FC = () => {
                     </button>
                     <button
                       onClick={() => {
+                        navigate('/profile');
+                        setShowUserMenu(false);
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-[#181410] hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <Icon name="person" className="text-[18px]" />
+                      My Profile
+                    </button>
+                    <button
+                      onClick={() => {
                         navigate('/messages');
                         setShowUserMenu(false);
                       }}

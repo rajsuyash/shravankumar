@@ -20,6 +20,7 @@ import { AdminDashboard } from './pages/AdminDashboard';
 import { TripUpdatesPage } from './pages/TripUpdatesPage';
 import { TripDetailPage } from './pages/TripDetailPage';
 import { SafetyVowsPage } from './pages/SafetyVowsPage';
+import { ProfilePage } from './pages/ProfilePage';
 
 function App() {
   return (
@@ -45,6 +46,7 @@ function App() {
               <Route path="/trip-updates" element={<ProtectedRoute><TripUpdatesPage /></ProtectedRoute>} />
               <Route path="/trip-detail" element={<ProtectedRoute><TripDetailPage /></ProtectedRoute>} />
               <Route path="/safety-vows" element={<SafetyVowsPage />} />
+              <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
               <Route path="*" element={<HomePage />} />
             </Routes>
           </main>

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { Icon, Button } from '../components/ui';
+import { Icon, Button, SOSButton } from '../components/ui';
 import { PilgrimChecklist } from '../components/coordinator/PilgrimChecklist';
+import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
 
 interface Trip {
@@ -24,6 +25,7 @@ type TabType = 'pilgrims' | 'vendors' | 'staff' | 'issues' | 'expenses' | 'updat
 export const TripDetailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const tripId = searchParams.get('tripId');
 
   const [trip, setTrip] = useState<Trip | null>(null);
@@ -280,6 +282,15 @@ export const TripDetailPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* SOS Emergency Button - visible during active trips */}
+      {trip.status === 'in_progress' && (
+        <SOSButton
+          tripId={trip.id}
+          coordinatorId={trip.coordinator_id}
+          userId={user?.id}
+        />
+      )}
     </div>
   );
 };
