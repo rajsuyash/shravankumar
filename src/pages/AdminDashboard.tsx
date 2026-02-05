@@ -30,6 +30,18 @@ interface BookingItem {
   };
 }
 
+interface UserItem {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  phone: string | null;
+  user_type: string;
+  created_at: string;
+}
+
+type AdminTab = 'overview' | 'circuits' | 'users' | 'bookings';
+
 export const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState({
     totalBookings: 0,
@@ -41,7 +53,10 @@ export const AdminDashboard: React.FC = () => {
   });
   const [recentBookings, setRecentBookings] = useState<BookingItem[]>([]);
   const [circuits, setCircuits] = useState<CircuitItem[]>([]);
+  const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingCircuit, setEditingCircuit] = useState<CircuitItem | null>(null);
   const [formData, setFormData] = useState({
@@ -62,7 +77,49 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchDashboardData();
+    fetchUsers();
   }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, email, first_name, last_name, phone, user_type, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    }
+  };
+
+  const updateUserRole = async (userId: string, newRole: string) => {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ user_type: newRole })
+        .eq('id', userId);
+
+      if (error) throw error;
+      
+      // Update local state
+      setUsers(users.map(u => 
+        u.id === userId ? { ...u, user_type: newRole } : u
+      ));
+      
+      alert('User role updated successfully!');
+    } catch (error) {
+      console.error('Error updating user role:', error);
+      alert('Failed to update user role');
+    }
+  };
+
+  const filteredUsers = users.filter(user => 
+    user.email.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
+    (user.first_name && user.first_name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
+    (user.last_name && user.last_name.toLowerCase().includes(userSearchQuery.toLowerCase()))
+  );
 
   const fetchDashboardData = async () => {
     try {
@@ -318,28 +375,56 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
-            <h2 className="text-xl font-bold text-[#181410] mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <Button variant="primary" size="sm" onClick={handleAddCircuit}>
-                <Icon name="add" className="mr-2" />
-                Add Circuit
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => alert('Feature coming soon')}>
-                <Icon name="person_add" className="mr-2" />
-                Add Staff
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => alert('Feature coming soon')}>
-                <Icon name="business" className="mr-2" />
-                Manage Vendors
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => alert('Feature coming soon')}>
-                <Icon name="analytics" className="mr-2" />
-                View Reports
-              </Button>
-            </div>
+        {/* Tab Navigation */}
+        <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden mb-8">
+          <div className="flex overflow-x-auto">
+            {[
+              { id: 'overview', label: 'Overview', icon: 'dashboard' },
+              { id: 'circuits', label: 'Circuits', icon: 'temple_hindu' },
+              { id: 'users', label: 'User Management', icon: 'people' },
+              { id: 'bookings', label: 'Bookings', icon: 'confirmation_number' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as AdminTab)}
+                className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors border-b-2 whitespace-nowrap ${
+                  activeTab === tab.id
+                    ? 'border-primary text-primary bg-primary/5'
+                    : 'border-transparent text-gray-600 hover:text-primary hover:bg-gray-50'
+                }`}
+              >
+                <Icon name={tab.icon} />
+                <span>{tab.label}</span>
+              </button>
+            ))}
           </div>
+        </div>
+
+        {/* Overview Tab */}
+        {activeTab === 'overview' && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+              <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
+                <h2 className="text-xl font-bold text-[#181410] mb-4">Quick Actions</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <Button variant="primary" size="sm" onClick={handleAddCircuit}>
+                    <Icon name="add" className="mr-2" />
+                    Add Circuit
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('users')}>
+                    <Icon name="person_add" className="mr-2" />
+                    Manage Users
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('circuits')}>
+                    <Icon name="temple_hindu" className="mr-2" />
+                    View Circuits
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('bookings')}>
+                    <Icon name="confirmation_number" className="mr-2" />
+                    View Bookings
+                  </Button>
+                </div>
+              </div>
 
           <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
             <h2 className="text-xl font-bold text-[#181410] mb-4">System Health</h2>
@@ -367,8 +452,12 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>
+            </div>
+          </>
+        )}
 
+        {/* Circuits Tab */}
+        {activeTab === 'circuits' && (
         <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden mb-8">
           <div className="border-b border-[#e7dfda] p-6">
             <h2 className="text-2xl font-bold text-[#181410]">Manage Sacred Circuits</h2>
@@ -436,10 +525,124 @@ export const AdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
+        )}
 
+        {/* Users Tab */}
+        {activeTab === 'users' && (
+          <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+            <div className="border-b border-[#e7dfda] p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-2xl font-bold text-[#181410]">User Management</h2>
+                <span className="text-sm text-gray-500">{users.length} total users</span>
+              </div>
+              <input
+                type="text"
+                placeholder="Search users by name or email..."
+                value={userSearchQuery}
+                onChange={(e) => setUserSearchQuery(e.target.value)}
+                className="w-full md:w-80 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Email
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Phone
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Current Role
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Joined
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Change Role
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredUsers.map((user) => (
+                    <tr key={user.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
+                            <span className="text-primary font-bold">
+                              {(user.first_name?.[0] || user.email[0]).toUpperCase()}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-[#181410]">
+                              {user.first_name && user.last_name 
+                                ? `${user.first_name} ${user.last_name}`
+                                : 'Name not set'}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                        {user.email}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                        {user.phone || 'Not set'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                          user.user_type === 'admin'
+                            ? 'bg-purple-100 text-purple-800'
+                            : user.user_type === 'staff'
+                            ? 'bg-blue-100 text-blue-800'
+                            : user.user_type === 'medical_team'
+                            ? 'bg-red-100 text-red-800'
+                            : user.user_type === 'coordinator'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {user.user_type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                        {format(new Date(user.created_at), 'MMM dd, yyyy')}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <select
+                          value={user.user_type}
+                          onChange={(e) => updateUserRole(user.id, e.target.value)}
+                          className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-primary"
+                        >
+                          <option value="customer">Customer</option>
+                          <option value="pilgrim">Pilgrim</option>
+                          <option value="staff">Staff</option>
+                          <option value="coordinator">Coordinator</option>
+                          <option value="medical_team">Medical Team</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {filteredUsers.length === 0 && (
+                <div className="text-center py-12">
+                  <Icon name="search_off" className="text-5xl text-gray-300 mb-2" />
+                  <p className="text-gray-500">No users found matching your search</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Bookings Tab */}
+        {activeTab === 'bookings' && (
         <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
           <div className="border-b border-[#e7dfda] p-6">
-            <h2 className="text-2xl font-bold text-[#181410]">Recent Bookings</h2>
+            <h2 className="text-2xl font-bold text-[#181410]">All Bookings</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -500,6 +703,7 @@ export const AdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
+        )}
       </div>
 
       {isEditModalOpen && (
