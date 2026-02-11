@@ -23,16 +23,31 @@ export const MessagingPage: React.FC = () => {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [coordinatorId, setCoordinatorId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const coordinatorId = '00000000-0000-0000-0000-000000000001';
 
   useEffect(() => {
     if (user) {
+      fetchCoordinator();
       fetchMessages();
       const interval = setInterval(fetchMessages, 5000);
       return () => clearInterval(interval);
     }
   }, [user]);
+
+  const fetchCoordinator = async () => {
+    // Find a coordinator or admin user to message
+    const { data } = await supabase
+      .from('users')
+      .select('id')
+      .in('user_type', ['coordinator', 'admin'])
+      .limit(1)
+      .maybeSingle();
+
+    if (data) {
+      setCoordinatorId(data.id);
+    }
+  };
 
   useEffect(() => {
     scrollToBottom();
@@ -64,7 +79,7 @@ export const MessagingPage: React.FC = () => {
 
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !user) return;
+    if (!newMessage.trim() || !user || !coordinatorId) return;
 
     setSending(true);
     try {
@@ -161,7 +176,7 @@ export const MessagingPage: React.FC = () => {
                 type="submit"
                 variant="primary"
                 size="lg"
-                disabled={!newMessage.trim() || sending}
+                disabled={!newMessage.trim() || sending || !coordinatorId}
               >
                 {sending ? (
                   <Icon name="progress_activity" className="animate-spin" />
@@ -173,9 +188,16 @@ export const MessagingPage: React.FC = () => {
                 )}
               </Button>
             </form>
-            <p className="text-xs text-gray-500 mt-2">
-              Response time: Usually within 1 hour during business hours (9 AM - 9 PM IST)
-            </p>
+            {!coordinatorId && (
+              <p className="text-xs text-amber-600 mt-2">
+                No coordinator is currently available. Please try again later or call support.
+              </p>
+            )}
+            {coordinatorId && (
+              <p className="text-xs text-gray-500 mt-2">
+                Response time: Usually within 1 hour during business hours (9 AM - 9 PM IST)
+              </p>
+            )}
           </div>
         </div>
       </div>

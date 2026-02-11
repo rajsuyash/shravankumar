@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useBooking } from '../contexts/BookingContext';
 import { supabase } from '../lib/supabase';
@@ -16,28 +16,149 @@ export const BookingPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState(1);
 
-  const [formData, setFormData] = useState({
-    departureDate: bookingData.departureDate || '',
-    numberOfTravelers: bookingData.numberOfTravelers || 1,
-    travelers: bookingData.travelers.length > 0 ? bookingData.travelers : [
-      {
-        firstName: '',
-        lastName: '',
-        age: 0,
-        gender: '',
+  // Availability checking state
+  const [availabilityInfo, setAvailabilityInfo] = useState<{
+    spotsAvailable: number;
+    maxCapacity: number;
+    isFullyBooked: boolean;
+    checking: boolean;
+  } | null>(null);
+
+  // Draft restoration state
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [savedDraft, setSavedDraft] = useState<Record<string, unknown> | null>(null);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftKey = circuitId ? `booking_draft_${circuitId}` : null;
+
+  const [formData, setFormData] = useState(() => {
+    return {
+      departureDate: bookingData.departureDate || '',
+      numberOfTravelers: bookingData.numberOfTravelers || 1,
+      travelers: bookingData.travelers.length > 0 ? bookingData.travelers : [
+        {
+          firstName: '',
+          lastName: '',
+          age: 0,
+          gender: '',
+          phone: '',
+          email: '',
+          relationship: 'self',
+        },
+      ],
+      emergencyContact: bookingData.emergencyContact || {
+        name: '',
+        relationship: '',
         phone: '',
         email: '',
-        relationship: 'self',
       },
-    ],
-    emergencyContact: bookingData.emergencyContact || {
-      name: '',
-      relationship: '',
-      phone: '',
-      email: '',
-    },
-    specialRequirements: bookingData.specialRequirements || '',
+      specialRequirements: bookingData.specialRequirements || '',
+    };
   });
+
+  // Check for saved draft on mount
+  useEffect(() => {
+    if (draftKey) {
+      try {
+        const raw = localStorage.getItem(draftKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setSavedDraft(parsed);
+          setShowDraftBanner(true);
+        }
+      } catch {
+        // Invalid draft data, ignore
+      }
+    }
+  }, [draftKey]);
+
+  // Auto-save draft (debounced, every 3 seconds)
+  useEffect(() => {
+    if (!draftKey) return;
+
+    if (draftTimerRef.current) {
+      clearTimeout(draftTimerRef.current);
+    }
+
+    draftTimerRef.current = setTimeout(() => {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(formData));
+      } catch {
+        // localStorage full or unavailable, ignore
+      }
+    }, 3000);
+
+    return () => {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+      }
+    };
+  }, [formData, draftKey]);
+
+  const restoreDraft = () => {
+    if (savedDraft) {
+      setFormData(savedDraft as typeof formData);
+      setShowDraftBanner(false);
+      setSavedDraft(null);
+    }
+  };
+
+  const dismissDraft = () => {
+    setShowDraftBanner(false);
+    setSavedDraft(null);
+    if (draftKey) {
+      localStorage.removeItem(draftKey);
+    }
+  };
+
+  // Real-time availability checking
+  const checkAvailability = useCallback(
+    async (date: string) => {
+      if (!circuitId || !date) {
+        setAvailabilityInfo(null);
+        return;
+      }
+
+      setAvailabilityInfo((prev) =>
+        prev ? { ...prev, checking: true } : { spotsAvailable: 0, maxCapacity: 30, isFullyBooked: false, checking: true }
+      );
+
+      try {
+        // Count existing bookings for this circuit + departure date
+        const { count, error } = await supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('circuit_id', circuitId)
+          .eq('departure_date', date)
+          .neq('booking_status', 'cancelled');
+
+        if (error) throw error;
+
+        const maxCapacity = circuit?.max_group_size || 30;
+        const bookedCount = count || 0;
+        const spotsAvailable = Math.max(0, maxCapacity - bookedCount);
+
+        setAvailabilityInfo({
+          spotsAvailable,
+          maxCapacity,
+          isFullyBooked: spotsAvailable === 0,
+          checking: false,
+        });
+      } catch (error) {
+        console.error('Error checking availability:', error);
+        setAvailabilityInfo(null);
+      }
+    },
+    [circuitId, circuit]
+  );
+
+  // Check availability when departure date changes
+  useEffect(() => {
+    if (formData.departureDate) {
+      checkAvailability(formData.departureDate);
+    } else {
+      setAvailabilityInfo(null);
+    }
+  }, [formData.departureDate, checkAvailability]);
 
   useEffect(() => {
     if (circuitId) {
@@ -122,6 +243,10 @@ export const BookingPage: React.FC = () => {
       alert('Please fill in all required fields');
       return;
     }
+    if (currentStep === 1 && availabilityInfo?.isFullyBooked) {
+      alert('This date is fully booked. Please select a different departure date.');
+      return;
+    }
     if (currentStep === 2 && !validateStep2()) {
       alert('Please fill in all traveler details');
       return;
@@ -154,6 +279,11 @@ export const BookingPage: React.FC = () => {
       returnDate,
       totalPrice,
     });
+
+    // Clear draft after successful submission
+    if (draftKey) {
+      localStorage.removeItem(draftKey);
+    }
 
     navigate('/booking/medical-assessment');
   };
@@ -189,6 +319,31 @@ export const BookingPage: React.FC = () => {
           <Icon name="arrow_back" />
           <span>Back to Circuit</span>
         </button>
+
+        {/* Resume Draft Banner */}
+        {showDraftBanner && savedDraft && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Icon name="edit_note" className="text-amber-600 text-xl" />
+              </div>
+              <div>
+                <p className="font-semibold text-amber-900">Resume previous booking?</p>
+                <p className="text-sm text-amber-700">
+                  You have a saved draft for this circuit. Would you like to continue where you left off?
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 flex-shrink-0 ml-4">
+              <Button variant="primary" size="sm" onClick={restoreDraft}>
+                Resume
+              </Button>
+              <Button variant="ghost" size="sm" onClick={dismissDraft}>
+                Discard
+              </Button>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white rounded-xl p-8 border border-[#e7dfda] mb-8">
           <div className="flex items-center gap-4 mb-6">
@@ -251,11 +406,42 @@ export const BookingPage: React.FC = () => {
                   min={minDate}
                   value={formData.departureDate}
                   onChange={(e) => setFormData({ ...formData, departureDate: e.target.value })}
-                  className="w-full px-4 py-3 border border-[#e7dfda] rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary ${
+                    availabilityInfo?.isFullyBooked
+                      ? 'border-red-300 bg-red-50'
+                      : 'border-[#e7dfda]'
+                  }`}
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   Booking must be made at least 7 days in advance
                 </p>
+
+                {/* Availability indicator */}
+                {formData.departureDate && availabilityInfo && (
+                  <div className="mt-2">
+                    {availabilityInfo.checking ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <Icon name="progress_activity" className="text-base animate-spin" />
+                        <span>Checking availability...</span>
+                      </div>
+                    ) : availabilityInfo.isFullyBooked ? (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                        <Icon name="event_busy" className="text-red-500 text-lg" />
+                        <span className="text-sm font-medium text-red-700">
+                          Fully booked for this date. Please select a different departure date.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
+                        <Icon name="event_available" className="text-green-600 text-lg" />
+                        <span className="text-sm font-medium text-green-700">
+                          {availabilityInfo.spotsAvailable} {availabilityInfo.spotsAvailable === 1 ? 'spot' : 'spots'} available
+                          <span className="text-green-500 font-normal"> (out of {availabilityInfo.maxCapacity})</span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -500,6 +686,7 @@ export const BookingPage: React.FC = () => {
               variant="primary"
               onClick={handleNext}
               className={currentStep === 1 ? 'ml-auto' : ''}
+              disabled={currentStep === 1 && (availabilityInfo?.isFullyBooked || availabilityInfo?.checking || false)}
             >
               {currentStep === 3 ? 'Continue to Medical Assessment' : 'Next'}
               <Icon name="arrow_forward" className="ml-2" />

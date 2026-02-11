@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
-import { Icon, Button } from '../components/ui';
+import { useAuth } from '../contexts/AuthContext';
+import { Icon, Button, Badge } from '../components/ui';
 import { format } from 'date-fns';
 import { uploadCircuitImage, deleteCircuitImage } from '../lib/imageUpload';
+import { processEmailQueue, getEmailQueueStats, getRecentEmails } from '../lib/emailService';
 
 interface CircuitItem {
   id: string;
@@ -25,6 +27,8 @@ interface BookingItem {
   number_of_travelers: number;
   total_price: number;
   booking_status: string;
+  created_at?: string;
+  circuit_id?: string;
   circuits?: {
     name: string;
   };
@@ -33,16 +37,73 @@ interface BookingItem {
 interface UserItem {
   id: string;
   email: string;
-  first_name: string | null;
-  last_name: string | null;
-  phone: string | null;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
   user_type: string;
   created_at: string;
 }
 
-type AdminTab = 'overview' | 'circuits' | 'users' | 'bookings';
+type UserRole = 'customer' | 'pilgrim' | 'coordinator' | 'medical' | 'admin';
+
+const USER_ROLES: { value: UserRole; label: string }[] = [
+  { value: 'customer', label: 'Customer' },
+  { value: 'pilgrim', label: 'Pilgrim' },
+  { value: 'coordinator', label: 'Coordinator' },
+  { value: 'medical', label: 'Medical' },
+  { value: 'admin', label: 'Admin' },
+];
+
+const STAFF_ROLES: { value: UserRole; label: string }[] = [
+  { value: 'coordinator', label: 'Coordinator' },
+  { value: 'medical', label: 'Medical Team' },
+  { value: 'admin', label: 'Admin' },
+];
+
+interface MonthlyRevenue {
+  month: string;
+  revenue: number;
+  count: number;
+}
+
+interface BookingStatusCount {
+  status: string;
+  count: number;
+}
+
+interface CircuitPopularity {
+  name: string;
+  bookingCount: number;
+  revenue: number;
+}
+
+interface VendorItem {
+  id?: string;
+  name: string;
+  vendor_type: 'hotel' | 'transport' | 'food' | 'guide' | 'medical' | 'other';
+  contact_person: string;
+  phone: string;
+  email: string;
+  status: 'active' | 'inactive';
+  notes?: string;
+  created_at?: string;
+}
+
+const VENDOR_TYPES = [
+  { value: 'hotel', label: 'Hotel / Accommodation' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'food', label: 'Food / Catering' },
+  { value: 'guide', label: 'Guide' },
+  { value: 'medical', label: 'Medical Support' },
+  { value: 'other', label: 'Other' },
+];
+
+type ActiveSection = 'overview' | 'users' | 'vendors' | 'reports';
 
 export const AdminDashboard: React.FC = () => {
+  const { user } = useAuth();
+  const [activeSection, setActiveSection] = useState<ActiveSection>('overview');
   const [stats, setStats] = useState({
     totalBookings: 0,
     totalRevenue: 0,
@@ -53,10 +114,7 @@ export const AdminDashboard: React.FC = () => {
   });
   const [recentBookings, setRecentBookings] = useState<BookingItem[]>([]);
   const [circuits, setCircuits] = useState<CircuitItem[]>([]);
-  const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
-  const [userSearchQuery, setUserSearchQuery] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingCircuit, setEditingCircuit] = useState<CircuitItem | null>(null);
   const [formData, setFormData] = useState({
@@ -75,51 +133,47 @@ export const AdminDashboard: React.FC = () => {
   const [featuredImageFile, setFeaturedImageFile] = useState<File | null>(null);
   const [additionalImageFiles, setAdditionalImageFiles] = useState<File[]>([]);
 
+  // User Management state
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [userUpdateFeedback, setUserUpdateFeedback] = useState<{ id: string; type: 'success' | 'error'; message: string } | null>(null);
+
+  // Add Staff Modal state
+  const [isAddStaffModalOpen, setIsAddStaffModalOpen] = useState(false);
+  const [staffFormData, setStaffFormData] = useState({ email: '', role: 'coordinator' as UserRole, fullName: '' });
+  const [staffFormLoading, setStaffFormLoading] = useState(false);
+  const [staffFormFeedback, setStaffFormFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Reports state
+  const [allBookings, setAllBookings] = useState<BookingItem[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+
+  // Vendor state
+  const [vendors, setVendors] = useState<VendorItem[]>([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [isVendorModalOpen, setIsVendorModalOpen] = useState(false);
+  const [editingVendor, setEditingVendor] = useState<VendorItem | null>(null);
+  const [vendorFormData, setVendorFormData] = useState<VendorItem>({
+    name: '',
+    vendor_type: 'hotel',
+    contact_person: '',
+    phone: '',
+    email: '',
+    status: 'active',
+    notes: '',
+  });
+
+  // Email Queue state
+  const [emailStats, setEmailStats] = useState({ pending: 0, sent: 0, failed: 0 });
+  const [recentEmails, setRecentEmails] = useState<{ id: string; to_email: string; subject: string; status: string; created_at: string; sent_at?: string; error_message?: string }[]>([]);
+  const [emailQueueLoading, setEmailQueueLoading] = useState(false);
+  const [processingQueue, setProcessingQueue] = useState(false);
+
   useEffect(() => {
     fetchDashboardData();
-    fetchUsers();
   }, []);
-
-  const fetchUsers = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('id, email, first_name, last_name, phone, user_type, created_at')
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setUsers(data || []);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-    }
-  };
-
-  const updateUserRole = async (userId: string, newRole: string) => {
-    try {
-      const { error } = await supabase
-        .from('users')
-        .update({ user_type: newRole })
-        .eq('id', userId);
-
-      if (error) throw error;
-      
-      // Update local state
-      setUsers(users.map(u => 
-        u.id === userId ? { ...u, user_type: newRole } : u
-      ));
-      
-      alert('User role updated successfully!');
-    } catch (error) {
-      console.error('Error updating user role:', error);
-      alert('Failed to update user role');
-    }
-  };
-
-  const filteredUsers = users.filter(user => 
-    user.email.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
-    (user.first_name && user.first_name.toLowerCase().includes(userSearchQuery.toLowerCase())) ||
-    (user.last_name && user.last_name.toLowerCase().includes(userSearchQuery.toLowerCase()))
-  );
 
   const fetchDashboardData = async () => {
     try {
@@ -162,6 +216,371 @@ export const AdminDashboard: React.FC = () => {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch users for the User Management section
+  const fetchUsers = async () => {
+    try {
+      setUsersLoading(true);
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, email, full_name, first_name, last_name, phone, user_type, created_at')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setUsers(data || []);
+    } catch (error) {
+      console.error('Error fetching users:', error);
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  // Fetch all bookings for reports
+  const fetchAllBookingsForReports = async () => {
+    try {
+      setReportsLoading(true);
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('id, booking_reference, departure_date, number_of_travelers, total_price, booking_status, created_at, circuit_id, circuits (name)');
+
+      if (error) throw error;
+      setAllBookings(data || []);
+    } catch (error) {
+      console.error('Error fetching bookings for reports:', error);
+    } finally {
+      setReportsLoading(false);
+    }
+  };
+
+  // Fetch vendors
+  const fetchVendors = async () => {
+    try {
+      setVendorsLoading(true);
+      const { data, error } = await supabase
+        .from('vendors')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setVendors(data || []);
+    } catch (error) {
+      console.error('Error fetching vendors:', error);
+    } finally {
+      setVendorsLoading(false);
+    }
+  };
+
+  const handleOpenVendorModal = (vendor?: VendorItem) => {
+    if (vendor) {
+      setEditingVendor(vendor);
+      setVendorFormData({ ...vendor });
+    } else {
+      setEditingVendor(null);
+      setVendorFormData({
+        name: '',
+        vendor_type: 'hotel',
+        contact_person: '',
+        phone: '',
+        email: '',
+        status: 'active',
+        notes: '',
+      });
+    }
+    setIsVendorModalOpen(true);
+  };
+
+  const handleSaveVendor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        name: vendorFormData.name,
+        vendor_type: vendorFormData.vendor_type,
+        contact_person: vendorFormData.contact_person,
+        phone: vendorFormData.phone,
+        email: vendorFormData.email,
+        status: vendorFormData.status,
+        notes: vendorFormData.notes || null,
+      };
+
+      if (editingVendor?.id) {
+        const { error } = await supabase
+          .from('vendors')
+          .update(payload)
+          .eq('id', editingVendor.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('vendors')
+          .insert(payload);
+        if (error) throw error;
+      }
+
+      setIsVendorModalOpen(false);
+      fetchVendors();
+    } catch (error) {
+      console.error('Error saving vendor:', error);
+      alert('Failed to save vendor. Please try again.');
+    }
+  };
+
+  const handleDeleteVendor = async (vendorId: string) => {
+    if (!confirm('Are you sure you want to delete this vendor?')) return;
+    try {
+      const { error } = await supabase
+        .from('vendors')
+        .delete()
+        .eq('id', vendorId);
+      if (error) throw error;
+      setVendors((prev) => prev.filter((v) => v.id !== vendorId));
+    } catch (error) {
+      console.error('Error deleting vendor:', error);
+      alert('Failed to delete vendor.');
+    }
+  };
+
+  // Fetch email queue data
+  const fetchEmailQueueData = async () => {
+    try {
+      setEmailQueueLoading(true);
+      const [stats, emails] = await Promise.all([
+        getEmailQueueStats(),
+        getRecentEmails(20),
+      ]);
+      setEmailStats(stats);
+      setRecentEmails(emails);
+    } catch (error) {
+      console.error('Error fetching email queue data:', error);
+    } finally {
+      setEmailQueueLoading(false);
+    }
+  };
+
+  const handleProcessEmailQueue = async () => {
+    try {
+      setProcessingQueue(true);
+      const result = await processEmailQueue();
+      alert(`Email queue processed: ${result.sent || 0} sent, ${result.failed || 0} failed`);
+      // Refresh stats after processing
+      fetchEmailQueueData();
+    } catch (error) {
+      console.error('Error processing email queue:', error);
+      alert('Failed to process email queue.');
+    } finally {
+      setProcessingQueue(false);
+    }
+  };
+
+  // Load data when section changes
+  useEffect(() => {
+    if (activeSection === 'users' && users.length === 0) {
+      fetchUsers();
+    }
+    if (activeSection === 'reports') {
+      if (allBookings.length === 0) fetchAllBookingsForReports();
+      fetchEmailQueueData();
+    }
+    if (activeSection === 'vendors' && vendors.length === 0) {
+      fetchVendors();
+    }
+  }, [activeSection]);
+
+  // Filter users based on search
+  const filteredUsers = useMemo(() => {
+    if (!userSearchQuery.trim()) return users;
+    const q = userSearchQuery.toLowerCase();
+    return users.filter((u) => {
+      const name = u.full_name || `${u.first_name || ''} ${u.last_name || ''}`.trim();
+      return (
+        u.email.toLowerCase().includes(q) ||
+        name.toLowerCase().includes(q)
+      );
+    });
+  }, [users, userSearchQuery]);
+
+  // Handle role change for a user
+  const handleUserRoleChange = async (userId: string, newRole: UserRole) => {
+    try {
+      setUpdatingUserId(userId);
+      setUserUpdateFeedback(null);
+
+      const targetUser = users.find((u) => u.id === userId);
+      const previousRole = targetUser?.user_type || 'unknown';
+
+      const { error } = await supabase
+        .from('users')
+        .update({ user_type: newRole })
+        .eq('id', userId);
+
+      if (error) throw error;
+
+      // Log role change to audit trail
+      await supabase.from('medical_audit_trail').insert({
+        action: 'role_change',
+        performed_by: user?.id,
+        details: {
+          target_user_id: userId,
+          target_user_email: targetUser?.email,
+          previous_role: previousRole,
+          new_role: newRole,
+        },
+      }).then(({ error: auditErr }) => {
+        if (auditErr) console.error('Audit log failed (non-blocking):', auditErr);
+      });
+
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, user_type: newRole } : u))
+      );
+      setUserUpdateFeedback({ id: userId, type: 'success', message: 'Role updated' });
+
+      setTimeout(() => setUserUpdateFeedback(null), 3000);
+    } catch (error) {
+      console.error('Error updating user role:', error);
+      setUserUpdateFeedback({ id: userId, type: 'error', message: 'Failed to update role' });
+      setTimeout(() => setUserUpdateFeedback(null), 4000);
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
+
+  // Handle Add Staff form submission
+  const handleAddStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setStaffFormLoading(true);
+      setStaffFormFeedback(null);
+
+      if (!staffFormData.email.trim()) {
+        setStaffFormFeedback({ type: 'error', message: 'Email is required' });
+        return;
+      }
+
+      // Check if user already exists
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id, email')
+        .eq('email', staffFormData.email.trim().toLowerCase())
+        .maybeSingle();
+
+      if (existingUser) {
+        // Update existing user's role
+        const { error } = await supabase
+          .from('users')
+          .update({ user_type: staffFormData.role })
+          .eq('id', existingUser.id);
+
+        if (error) throw error;
+
+        setStaffFormFeedback({
+          type: 'success',
+          message: `User ${staffFormData.email} already exists. Role updated to ${staffFormData.role}.`,
+        });
+      } else {
+        // Create new user record
+        const { error } = await supabase.from('users').insert({
+          email: staffFormData.email.trim().toLowerCase(),
+          full_name: staffFormData.fullName.trim() || null,
+          user_type: staffFormData.role,
+        });
+
+        if (error) throw error;
+
+        setStaffFormFeedback({
+          type: 'success',
+          message: `Staff member ${staffFormData.email} added as ${staffFormData.role}. They will need to create an account to sign in.`,
+        });
+      }
+
+      // Refresh users list if it was loaded
+      if (users.length > 0) {
+        fetchUsers();
+      }
+
+      // Reset form after success
+      setStaffFormData({ email: '', role: 'coordinator', fullName: '' });
+    } catch (error: unknown) {
+      console.error('Error adding staff:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      setStaffFormFeedback({ type: 'error', message: `Failed to add staff: ${errorMessage}` });
+    } finally {
+      setStaffFormLoading(false);
+    }
+  };
+
+  // Report computations
+  const monthlyRevenue: MonthlyRevenue[] = useMemo(() => {
+    if (allBookings.length === 0) return [];
+    const grouped: Record<string, { revenue: number; count: number }> = {};
+    allBookings.forEach((b) => {
+      const date = b.created_at || b.departure_date;
+      if (!date) return;
+      const monthKey = format(new Date(date), 'yyyy-MM');
+      if (!grouped[monthKey]) {
+        grouped[monthKey] = { revenue: 0, count: 0 };
+      }
+      grouped[monthKey].revenue += b.total_price || 0;
+      grouped[monthKey].count += 1;
+    });
+    return Object.entries(grouped)
+      .map(([month, data]) => ({ month, ...data }))
+      .sort((a, b) => b.month.localeCompare(a.month))
+      .slice(0, 12);
+  }, [allBookings]);
+
+  const bookingStatusCounts: BookingStatusCount[] = useMemo(() => {
+    if (allBookings.length === 0) return [];
+    const grouped: Record<string, number> = {};
+    allBookings.forEach((b) => {
+      const status = b.booking_status || 'unknown';
+      grouped[status] = (grouped[status] || 0) + 1;
+    });
+    return Object.entries(grouped)
+      .map(([status, count]) => ({ status, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [allBookings]);
+
+  const popularCircuits: CircuitPopularity[] = useMemo(() => {
+    if (allBookings.length === 0) return [];
+    const grouped: Record<string, { name: string; bookingCount: number; revenue: number }> = {};
+    allBookings.forEach((b) => {
+      const circuitName = b.circuits?.name || 'Unknown';
+      const key = b.circuit_id || circuitName;
+      if (!grouped[key]) {
+        grouped[key] = { name: circuitName, bookingCount: 0, revenue: 0 };
+      }
+      grouped[key].bookingCount += 1;
+      grouped[key].revenue += b.total_price || 0;
+    });
+    return Object.values(grouped).sort((a, b) => b.bookingCount - a.bookingCount);
+  }, [allBookings]);
+
+  // Helper to get display name for a user
+  const getUserDisplayName = (user: UserItem): string => {
+    if (user.full_name) return user.full_name;
+    const parts = [user.first_name, user.last_name].filter(Boolean);
+    return parts.length > 0 ? parts.join(' ') : '--';
+  };
+
+  // Helper to get role badge variant
+  const getRoleBadgeVariant = (role: string): 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger' => {
+    switch (role) {
+      case 'admin': return 'danger';
+      case 'coordinator': return 'primary';
+      case 'medical': return 'warning';
+      case 'pilgrim': return 'success';
+      default: return 'default';
+    }
+  };
+
+  // Helper to get status badge color
+  const getStatusColor = (status: string): string => {
+    switch (status) {
+      case 'confirmed': return 'bg-green-100 text-green-800';
+      case 'completed': return 'bg-blue-100 text-blue-800';
+      case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'cancelled': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -375,56 +794,67 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden mb-8">
-          <div className="flex overflow-x-auto">
-            {[
-              { id: 'overview', label: 'Overview', icon: 'dashboard' },
-              { id: 'circuits', label: 'Circuits', icon: 'temple_hindu' },
-              { id: 'users', label: 'User Management', icon: 'people' },
-              { id: 'bookings', label: 'Bookings', icon: 'confirmation_number' },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as AdminTab)}
-                className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors border-b-2 whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? 'border-primary text-primary bg-primary/5'
-                    : 'border-transparent text-gray-600 hover:text-primary hover:bg-gray-50'
-                }`}
-              >
-                <Icon name={tab.icon} />
-                <span>{tab.label}</span>
-              </button>
-            ))}
-          </div>
+        {/* Section Navigation Tabs */}
+        <div className="flex gap-2 mb-8 overflow-x-auto pb-2">
+          <Button
+            variant={activeSection === 'overview' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('overview')}
+          >
+            <Icon name="dashboard" className="mr-2" />
+            Overview
+          </Button>
+          <Button
+            variant={activeSection === 'users' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('users')}
+          >
+            <Icon name="group" className="mr-2" />
+            User Management
+          </Button>
+          <Button
+            variant={activeSection === 'vendors' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('vendors')}
+          >
+            <Icon name="business" className="mr-2" />
+            Vendors
+          </Button>
+          <Button
+            variant={activeSection === 'reports' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('reports')}
+          >
+            <Icon name="analytics" className="mr-2" />
+            Reports
+          </Button>
         </div>
 
-        {/* Overview Tab */}
-        {activeTab === 'overview' && (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-              <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
-                <h2 className="text-xl font-bold text-[#181410] mb-4">Quick Actions</h2>
-                <div className="grid grid-cols-2 gap-4">
-                  <Button variant="primary" size="sm" onClick={handleAddCircuit}>
-                    <Icon name="add" className="mr-2" />
-                    Add Circuit
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('users')}>
-                    <Icon name="person_add" className="mr-2" />
-                    Manage Users
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('circuits')}>
-                    <Icon name="temple_hindu" className="mr-2" />
-                    View Circuits
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setActiveTab('bookings')}>
-                    <Icon name="confirmation_number" className="mr-2" />
-                    View Bookings
-                  </Button>
-                </div>
-              </div>
+        {/* ========== OVERVIEW SECTION ========== */}
+        {activeSection === 'overview' && (
+        <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
+            <h2 className="text-xl font-bold text-[#181410] mb-4">Quick Actions</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <Button variant="primary" size="sm" onClick={handleAddCircuit}>
+                <Icon name="add" className="mr-2" />
+                Add Circuit
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setIsAddStaffModalOpen(true)}>
+                <Icon name="person_add" className="mr-2" />
+                Add Staff
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setActiveSection('vendors')}>
+                <Icon name="business" className="mr-2" />
+                Manage Vendors
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setActiveSection('reports')}>
+                <Icon name="analytics" className="mr-2" />
+                View Reports
+              </Button>
+            </div>
+          </div>
 
           <div className="bg-white rounded-xl p-6 border border-[#e7dfda]">
             <h2 className="text-xl font-bold text-[#181410] mb-4">System Health</h2>
@@ -452,12 +882,8 @@ export const AdminDashboard: React.FC = () => {
               </div>
             </div>
           </div>
-            </div>
-          </>
-        )}
+        </div>
 
-        {/* Circuits Tab */}
-        {activeTab === 'circuits' && (
         <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden mb-8">
           <div className="border-b border-[#e7dfda] p-6">
             <h2 className="text-2xl font-bold text-[#181410]">Manage Sacred Circuits</h2>
@@ -525,124 +951,10 @@ export const AdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
-        )}
 
-        {/* Users Tab */}
-        {activeTab === 'users' && (
-          <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
-            <div className="border-b border-[#e7dfda] p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-2xl font-bold text-[#181410]">User Management</h2>
-                <span className="text-sm text-gray-500">{users.length} total users</span>
-              </div>
-              <input
-                type="text"
-                placeholder="Search users by name or email..."
-                value={userSearchQuery}
-                onChange={(e) => setUserSearchQuery(e.target.value)}
-                className="w-full md:w-80 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      User
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Email
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Phone
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Current Role
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Joined
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Change Role
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredUsers.map((user) => (
-                    <tr key={user.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                            <span className="text-primary font-bold">
-                              {(user.first_name?.[0] || user.email[0]).toUpperCase()}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-[#181410]">
-                              {user.first_name && user.last_name 
-                                ? `${user.first_name} ${user.last_name}`
-                                : 'Name not set'}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        {user.email}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        {user.phone || 'Not set'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                          user.user_type === 'admin'
-                            ? 'bg-purple-100 text-purple-800'
-                            : user.user_type === 'staff'
-                            ? 'bg-blue-100 text-blue-800'
-                            : user.user_type === 'medical_team'
-                            ? 'bg-red-100 text-red-800'
-                            : user.user_type === 'coordinator'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {user.user_type}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                        {format(new Date(user.created_at), 'MMM dd, yyyy')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <select
-                          value={user.user_type}
-                          onChange={(e) => updateUserRole(user.id, e.target.value)}
-                          className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:ring-2 focus:ring-primary"
-                        >
-                          <option value="customer">Customer</option>
-                          <option value="pilgrim">Pilgrim</option>
-                          <option value="staff">Staff</option>
-                          <option value="coordinator">Coordinator</option>
-                          <option value="medical_team">Medical Team</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredUsers.length === 0 && (
-                <div className="text-center py-12">
-                  <Icon name="search_off" className="text-5xl text-gray-300 mb-2" />
-                  <p className="text-gray-500">No users found matching your search</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Bookings Tab */}
-        {activeTab === 'bookings' && (
         <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
           <div className="border-b border-[#e7dfda] p-6">
-            <h2 className="text-2xl font-bold text-[#181410]">All Bookings</h2>
+            <h2 className="text-2xl font-bold text-[#181410]">Recent Bookings</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -703,9 +1015,713 @@ export const AdminDashboard: React.FC = () => {
             </table>
           </div>
         </div>
+        </>
+        )}
+
+        {/* ========== USER MANAGEMENT SECTION ========== */}
+        {activeSection === 'users' && (
+          <div className="space-y-6">
+            {/* User Management Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-[#181410]">User Management</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {users.length} total users {userSearchQuery && `(${filteredUsers.length} matching)`}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <div className="relative">
+                  <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xl" />
+                  <input
+                    type="text"
+                    placeholder="Search by email or name..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent w-64"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      onClick={() => setUserSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <Icon name="close" className="text-lg" />
+                    </button>
+                  )}
+                </div>
+                <Button variant="primary" size="sm" onClick={() => setIsAddStaffModalOpen(true)}>
+                  <Icon name="person_add" className="mr-2" />
+                  Add Staff
+                </Button>
+                <Button variant="secondary" size="sm" onClick={fetchUsers}>
+                  <Icon name="refresh" className="mr-1" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            {/* Users Table */}
+            <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+              {usersLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+                  <Icon name="person_off" className="text-5xl mb-3" />
+                  <p className="text-lg font-medium">
+                    {userSearchQuery ? 'No users match your search' : 'No users found'}
+                  </p>
+                  {userSearchQuery && (
+                    <button
+                      onClick={() => setUserSearchQuery('')}
+                      className="mt-2 text-primary hover:underline text-sm"
+                    >
+                      Clear search
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Email
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Name
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Phone
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          User Type
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Created Date
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {filteredUsers.map((user) => (
+                        <tr key={user.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-[#181410]">
+                            {user.email}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {getUserDisplayName(user)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {user.phone || '--'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <Badge variant={getRoleBadgeVariant(user.user_type)}>
+                              {user.user_type}
+                            </Badge>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {user.created_at ? format(new Date(user.created_at), 'MMM dd, yyyy') : '--'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={user.user_type}
+                                onChange={(e) => handleUserRoleChange(user.id, e.target.value as UserRole)}
+                                disabled={updatingUserId === user.id}
+                                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-primary focus:border-transparent bg-white disabled:opacity-50"
+                              >
+                                {USER_ROLES.map((role) => (
+                                  <option key={role.value} value={role.value}>
+                                    {role.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {updatingUserId === user.id && (
+                                <Icon name="progress_activity" className="text-lg text-primary animate-spin" />
+                              )}
+                              {userUpdateFeedback?.id === user.id && (
+                                <span className={`text-xs font-medium ${
+                                  userUpdateFeedback.type === 'success' ? 'text-green-600' : 'text-red-600'
+                                }`}>
+                                  {userUpdateFeedback.message}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========== VENDORS SECTION ========== */}
+        {activeSection === 'vendors' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-[#181410]">Vendor Management</h2>
+                <p className="text-sm text-gray-600 mt-1">{vendors.length} vendors registered</p>
+              </div>
+              <div className="flex gap-3">
+                <Button variant="primary" size="sm" onClick={() => handleOpenVendorModal()}>
+                  <Icon name="add" className="mr-2" />
+                  Add Vendor
+                </Button>
+                <Button variant="secondary" size="sm" onClick={fetchVendors}>
+                  <Icon name="refresh" className="mr-1" />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+              {vendorsLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+                </div>
+              ) : vendors.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-gray-500">
+                  <Icon name="business" className="text-5xl mb-3" />
+                  <p className="text-lg font-medium">No vendors added yet</p>
+                  <p className="text-sm mt-1">Add your first vendor to get started</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {vendors.map((vendor) => (
+                        <tr key={vendor.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-[#181410]">
+                            {vendor.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">
+                            {vendor.vendor_type}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {vendor.contact_person}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {vendor.phone}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              vendor.status === 'active'
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}>
+                              {vendor.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => handleOpenVendorModal(vendor)}
+                                className="text-primary hover:text-[#A04000] font-medium"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => vendor.id && handleDeleteVendor(vendor.id)}
+                                className="text-red-600 hover:text-red-800 font-medium"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========== REPORTS SECTION ========== */}
+        {activeSection === 'reports' && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[#181410]">Reports & Analytics</h2>
+              <p className="text-sm text-gray-600 mt-1">Revenue, bookings, and circuit performance data</p>
+            </div>
+
+            {reportsLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+              </div>
+            ) : allBookings.length === 0 ? (
+              <div className="bg-white rounded-xl border border-[#e7dfda] p-12 flex flex-col items-center justify-center">
+                <Icon name="bar_chart_off" className="text-5xl text-gray-300 mb-3" />
+                <p className="text-lg font-medium text-gray-500">No booking data available for reports</p>
+              </div>
+            ) : (
+              <>
+                {/* Booking Status Summary */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {bookingStatusCounts.map((item) => (
+                    <div key={item.status} className="bg-white rounded-xl p-5 border border-[#e7dfda]">
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(item.status)}`}>
+                          {item.status}
+                        </span>
+                      </div>
+                      <p className="text-3xl font-bold text-[#181410]">{item.count}</p>
+                      <p className="text-sm text-gray-500 mt-1">bookings</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Monthly Revenue Table */}
+                <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+                  <div className="border-b border-[#e7dfda] p-6">
+                    <h3 className="text-xl font-bold text-[#181410]">Monthly Revenue</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Month
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Bookings
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Revenue
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Avg per Booking
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {monthlyRevenue.map((item) => (
+                          <tr key={item.month} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-[#181410]">
+                              {format(new Date(item.month + '-01'), 'MMMM yyyy')}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                              {item.count}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">
+                              ₹{item.revenue.toLocaleString()}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                              ₹{item.count > 0 ? Math.round(item.revenue / item.count).toLocaleString() : 0}
+                            </td>
+                          </tr>
+                        ))}
+                        {monthlyRevenue.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                              No monthly data available
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Most Popular Circuits */}
+                <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+                  <div className="border-b border-[#e7dfda] p-6">
+                    <h3 className="text-xl font-bold text-[#181410]">Most Popular Circuits</h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Rank
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Circuit Name
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Bookings
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Total Revenue
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {popularCircuits.map((item, index) => (
+                          <tr key={item.name} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                              <span className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${
+                                index === 0 ? 'bg-yellow-100 text-yellow-800' :
+                                index === 1 ? 'bg-gray-200 text-gray-700' :
+                                index === 2 ? 'bg-amber-100 text-amber-800' :
+                                'bg-gray-100 text-gray-500'
+                              }`}>
+                                {index + 1}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm font-medium text-[#181410]">
+                              {item.name}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                              {item.bookingCount}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-primary">
+                              ₹{item.revenue.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                        {popularCircuits.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                              No circuit data available
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Email Queue Section */}
+                <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+                  <div className="border-b border-[#e7dfda] p-6 flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-bold text-[#181410]">Email Queue</h3>
+                      <p className="text-sm text-gray-500 mt-1">Manage outbound email notifications</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleProcessEmailQueue}
+                        disabled={processingQueue || emailStats.pending === 0}
+                      >
+                        {processingQueue ? (
+                          <>
+                            <Icon name="progress_activity" className="mr-1 animate-spin" />
+                            Processing...
+                          </>
+                        ) : (
+                          <>
+                            <Icon name="send" className="mr-1" />
+                            Process Queue ({emailStats.pending})
+                          </>
+                        )}
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={fetchEmailQueueData} disabled={emailQueueLoading}>
+                        <Icon name="refresh" className={emailQueueLoading ? 'animate-spin' : ''} />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Stats cards */}
+                  <div className="grid grid-cols-3 gap-4 p-6 border-b border-gray-100">
+                    <div className="text-center p-4 bg-yellow-50 rounded-lg">
+                      <p className="text-2xl font-bold text-yellow-700">{emailStats.pending}</p>
+                      <p className="text-xs text-yellow-600 font-medium">Pending</p>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <p className="text-2xl font-bold text-green-700">{emailStats.sent}</p>
+                      <p className="text-xs text-green-600 font-medium">Sent</p>
+                    </div>
+                    <div className="text-center p-4 bg-red-50 rounded-lg">
+                      <p className="text-2xl font-bold text-red-700">{emailStats.failed}</p>
+                      <p className="text-xs text-red-600 font-medium">Failed</p>
+                    </div>
+                  </div>
+
+                  {/* Recent emails list */}
+                  {emailQueueLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+                    </div>
+                  ) : recentEmails.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+                      <Icon name="mail" className="text-4xl mb-2" />
+                      <p className="text-sm">No emails in the queue</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Recipient</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {recentEmails.map((email) => (
+                            <tr key={email.id} className="hover:bg-gray-50">
+                              <td className="px-6 py-3 whitespace-nowrap text-sm text-[#181410]">
+                                {email.to_email}
+                              </td>
+                              <td className="px-6 py-3 text-sm text-gray-700 max-w-xs truncate">
+                                {email.subject}
+                              </td>
+                              <td className="px-6 py-3 whitespace-nowrap">
+                                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                                  email.status === 'sent'
+                                    ? 'bg-green-100 text-green-800'
+                                    : email.status === 'failed'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-yellow-100 text-yellow-800'
+                                }`}>
+                                  {email.status}
+                                </span>
+                              </td>
+                              <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                                {email.created_at ? format(new Date(email.created_at), 'MMM dd, h:mm a') : '--'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
 
+      {/* ========== ADD STAFF MODAL ========== */}
+      {isAddStaffModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full">
+            <div className="border-b border-[#e7dfda] p-6 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-[#181410]">Add Staff Member</h2>
+              <button
+                onClick={() => {
+                  setIsAddStaffModalOpen(false);
+                  setStaffFormFeedback(null);
+                  setStaffFormData({ email: '', role: 'coordinator', fullName: '' });
+                }}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <Icon name="close" className="text-2xl" />
+              </button>
+            </div>
+            <form onSubmit={handleAddStaff} className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  value={staffFormData.email}
+                  onChange={(e) => setStaffFormData({ ...staffFormData, email: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  placeholder="staff@example.com"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Full Name (optional)
+                </label>
+                <input
+                  type="text"
+                  value={staffFormData.fullName}
+                  onChange={(e) => setStaffFormData({ ...staffFormData, fullName: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  placeholder="e.g., Ramesh Kumar"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Role
+                </label>
+                <select
+                  value={staffFormData.role}
+                  onChange={(e) => setStaffFormData({ ...staffFormData, role: e.target.value as UserRole })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent bg-white"
+                >
+                  {STAFF_ROLES.map((role) => (
+                    <option key={role.value} value={role.value}>
+                      {role.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {staffFormFeedback && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  staffFormFeedback.type === 'success'
+                    ? 'bg-green-50 border border-green-200 text-green-700'
+                    : 'bg-red-50 border border-red-200 text-red-700'
+                }`}>
+                  <div className="flex items-start gap-2">
+                    <Icon
+                      name={staffFormFeedback.type === 'success' ? 'check_circle' : 'error'}
+                      className="text-lg flex-shrink-0 mt-0.5"
+                    />
+                    <span>{staffFormFeedback.message}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setIsAddStaffModalOpen(false);
+                    setStaffFormFeedback(null);
+                    setStaffFormData({ email: '', role: 'coordinator', fullName: '' });
+                  }}
+                  className="flex-1"
+                  disabled={staffFormLoading}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="flex-1" disabled={staffFormLoading}>
+                  {staffFormLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Icon name="progress_activity" className="animate-spin" />
+                      Adding...
+                    </span>
+                  ) : (
+                    'Add Staff'
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========== VENDOR EDIT MODAL ========== */}
+      {isVendorModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="border-b border-[#e7dfda] p-6 flex items-center justify-between sticky top-0 bg-white">
+              <h2 className="text-2xl font-bold text-[#181410]">
+                {editingVendor ? 'Edit Vendor' : 'Add New Vendor'}
+              </h2>
+              <button
+                onClick={() => setIsVendorModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <Icon name="close" className="text-2xl" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveVendor} className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Vendor Name *</label>
+                <input
+                  type="text"
+                  value={vendorFormData.name}
+                  onChange={(e) => setVendorFormData({ ...vendorFormData, name: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Vendor Type *</label>
+                <select
+                  value={vendorFormData.vendor_type}
+                  onChange={(e) => setVendorFormData({ ...vendorFormData, vendor_type: e.target.value as VendorItem['vendor_type'] })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent bg-white"
+                >
+                  {VENDOR_TYPES.map((vt) => (
+                    <option key={vt.value} value={vt.value}>{vt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Contact Person *</label>
+                <input
+                  type="text"
+                  value={vendorFormData.contact_person}
+                  onChange={(e) => setVendorFormData({ ...vendorFormData, contact_person: e.target.value })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Phone *</label>
+                  <input
+                    type="tel"
+                    value={vendorFormData.phone}
+                    onChange={(e) => setVendorFormData({ ...vendorFormData, phone: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                  <input
+                    type="email"
+                    value={vendorFormData.email}
+                    onChange={(e) => setVendorFormData({ ...vendorFormData, email: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                <select
+                  value={vendorFormData.status}
+                  onChange={(e) => setVendorFormData({ ...vendorFormData, status: e.target.value as 'active' | 'inactive' })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent bg-white"
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Notes</label>
+                <textarea
+                  value={vendorFormData.notes || ''}
+                  onChange={(e) => setVendorFormData({ ...vendorFormData, notes: e.target.value })}
+                  rows={3}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  placeholder="Contract details, special arrangements, etc."
+                />
+              </div>
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIsVendorModalOpen(false)}
+                  className="flex-1"
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="flex-1">
+                  {editingVendor ? 'Update Vendor' : 'Add Vendor'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========== CIRCUIT EDIT MODAL ========== */}
       {isEditModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">

@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { queueMedicalClearanceEmail } from '../lib/emailService';
 import { Icon, Button, Badge } from '../components/ui';
 import { format } from 'date-fns';
 
@@ -32,11 +34,29 @@ interface MedicalAssessment {
   };
 }
 
+interface AuditEntry {
+  id: string;
+  assessment_id: string;
+  action: string;
+  performed_by: string;
+  notes: string | null;
+  created_at: string;
+  performer?: {
+    first_name: string;
+    last_name: string;
+  };
+}
+
 export const MedicalTeamDashboard: React.FC = () => {
+  const { user } = useAuth();
   const [assessments, setAssessments] = useState<MedicalAssessment[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'cleared' | 'flagged'>('pending');
   const [selectedAssessment, setSelectedAssessment] = useState<MedicalAssessment | null>(null);
+  const [doctorNotes, setDoctorNotes] = useState('');
+  const [auditHistory, setAuditHistory] = useState<AuditEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
 
   useEffect(() => {
     fetchAssessments();
@@ -75,6 +95,54 @@ export const MedicalTeamDashboard: React.FC = () => {
     }
   };
 
+  const fetchAuditHistory = useCallback(async (assessmentId: string) => {
+    try {
+      setAuditLoading(true);
+      const { data, error } = await supabase
+        .from('medical_audit_trail')
+        .select(`
+          *,
+          performer:performed_by (
+            first_name,
+            last_name
+          )
+        `)
+        .eq('assessment_id', assessmentId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setAuditHistory(data || []);
+    } catch (error) {
+      console.error('Error fetching audit history:', error);
+      setAuditHistory([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, []);
+
+  const logAuditTrail = async (
+    assessmentId: string,
+    action: 'approved' | 'revoked' | 'flagged_high_risk' | 'note_added',
+    notes?: string,
+  ) => {
+    if (!user?.id) return;
+
+    try {
+      const { error } = await supabase.from('medical_audit_trail').insert({
+        assessment_id: assessmentId,
+        action,
+        performed_by: user.id,
+        notes: notes || null,
+      });
+
+      if (error) {
+        console.error('Error logging audit trail:', error);
+      }
+    } catch (error) {
+      console.error('Error logging audit trail:', error);
+    }
+  };
+
   const updateClearance = async (assessmentId: string, cleared: boolean) => {
     try {
       const { error } = await supabase
@@ -83,6 +151,24 @@ export const MedicalTeamDashboard: React.FC = () => {
         .eq('id', assessmentId);
 
       if (error) throw error;
+
+      // Log to audit trail
+      await logAuditTrail(assessmentId, cleared ? 'approved' : 'revoked');
+
+      // If approving, send medical clearance email
+      if (cleared) {
+        const assessment = assessments.find((a) => a.id === assessmentId);
+        if (assessment) {
+          await queueMedicalClearanceEmail({
+            pilgrimName: `${assessment.users.first_name} ${assessment.users.last_name}`,
+            pilgrimEmail: assessment.users.email,
+            bookingReference: assessment.bookings.booking_reference,
+            circuitName: assessment.bookings.circuits.name,
+            departureDate: format(new Date(assessment.bookings.departure_date), 'MMM dd, yyyy'),
+          });
+        }
+      }
+
       fetchAssessments();
       alert(`Medical clearance ${cleared ? 'approved' : 'revoked'} successfully`);
     } catch (error) {
@@ -91,16 +177,114 @@ export const MedicalTeamDashboard: React.FC = () => {
     }
   };
 
-  const filterAssessments = (assessments: MedicalAssessment[]) => {
+  const flagHighRisk = async (assessmentId: string) => {
+    try {
+      const { error } = await supabase
+        .from('medical_assessments')
+        .update({ flagged_high_risk: true })
+        .eq('id', assessmentId);
+
+      if (error) throw error;
+
+      await logAuditTrail(assessmentId, 'flagged_high_risk');
+
+      // Update local state for the selected assessment
+      if (selectedAssessment && selectedAssessment.id === assessmentId) {
+        setSelectedAssessment({ ...selectedAssessment, flagged_high_risk: true });
+      }
+
+      fetchAssessments();
+      // Refresh audit history if the modal is open
+      fetchAuditHistory(assessmentId);
+      alert('Patient flagged as high risk');
+    } catch (error) {
+      console.error('Error flagging high risk:', error);
+      alert('Failed to flag patient');
+    }
+  };
+
+  const saveDoctorNotes = async (assessmentId: string) => {
+    if (!doctorNotes.trim()) return;
+
+    try {
+      setSavingNotes(true);
+      const { error } = await supabase
+        .from('medical_assessments')
+        .update({ doctor_notes: doctorNotes })
+        .eq('id', assessmentId);
+
+      if (error) throw error;
+
+      await logAuditTrail(assessmentId, 'note_added', doctorNotes);
+
+      // Update local state
+      if (selectedAssessment && selectedAssessment.id === assessmentId) {
+        setSelectedAssessment({ ...selectedAssessment, doctor_notes: doctorNotes });
+      }
+
+      fetchAssessments();
+      fetchAuditHistory(assessmentId);
+      alert('Doctor notes saved');
+    } catch (error) {
+      console.error('Error saving doctor notes:', error);
+      alert('Failed to save notes');
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const openAssessmentDetail = (assessment: MedicalAssessment) => {
+    setSelectedAssessment(assessment);
+    setDoctorNotes(assessment.doctor_notes || '');
+    fetchAuditHistory(assessment.id);
+  };
+
+  const closeAssessmentDetail = () => {
+    setSelectedAssessment(null);
+    setDoctorNotes('');
+    setAuditHistory([]);
+  };
+
+  const getActionLabel = (action: string): string => {
+    switch (action) {
+      case 'approved':
+        return 'Clearance Approved';
+      case 'revoked':
+        return 'Clearance Revoked';
+      case 'flagged_high_risk':
+        return 'Flagged High Risk';
+      case 'note_added':
+        return 'Note Added';
+      default:
+        return action;
+    }
+  };
+
+  const getActionColor = (action: string): string => {
+    switch (action) {
+      case 'approved':
+        return 'text-green-700 bg-green-50';
+      case 'revoked':
+        return 'text-red-700 bg-red-50';
+      case 'flagged_high_risk':
+        return 'text-orange-700 bg-orange-50';
+      case 'note_added':
+        return 'text-blue-700 bg-blue-50';
+      default:
+        return 'text-gray-700 bg-gray-50';
+    }
+  };
+
+  const filterAssessments = (list: MedicalAssessment[]) => {
     switch (filterStatus) {
       case 'pending':
-        return assessments.filter(a => !a.medical_clearance);
+        return list.filter(a => !a.medical_clearance);
       case 'cleared':
-        return assessments.filter(a => a.medical_clearance);
+        return list.filter(a => a.medical_clearance);
       case 'flagged':
-        return assessments.filter(a => a.flagged_high_risk);
+        return list.filter(a => a.flagged_high_risk);
       default:
-        return assessments;
+        return list;
     }
   };
 
@@ -300,7 +484,7 @@ export const MedicalTeamDashboard: React.FC = () => {
                       <Button
                         variant="primary"
                         size="sm"
-                        onClick={() => setSelectedAssessment(assessment)}
+                        onClick={() => openAssessmentDetail(assessment)}
                       >
                         <Icon name="visibility" className="mr-1" />
                         View Full Assessment
@@ -327,6 +511,17 @@ export const MedicalTeamDashboard: React.FC = () => {
                           Revoke Clearance
                         </Button>
                       )}
+                      {!assessment.flagged_high_risk && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => flagHighRisk(assessment.id)}
+                          className="bg-orange-50 text-orange-700 hover:bg-orange-100"
+                        >
+                          <Icon name="warning" className="mr-1" />
+                          Flag High Risk
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -342,12 +537,13 @@ export const MedicalTeamDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Assessment Detail Modal */}
       {selectedAssessment && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8">
             <div className="flex items-start justify-between mb-6">
               <h2 className="text-2xl font-bold text-[#181410]">Medical Assessment Details</h2>
-              <button onClick={() => setSelectedAssessment(null)} className="text-gray-500 hover:text-gray-700">
+              <button onClick={closeAssessmentDetail} className="text-gray-500 hover:text-gray-700">
                 <Icon name="close" className="text-2xl" />
               </button>
             </div>
@@ -421,22 +617,125 @@ export const MedicalTeamDashboard: React.FC = () => {
                   <p className="text-gray-700">{selectedAssessment.oxygen_required ? 'Required' : 'Not required'}</p>
                 </div>
               </div>
+
+              {/* Doctor Notes Section */}
+              <div className="border-t border-gray-200 pt-6">
+                <h3 className="font-bold text-[#181410] mb-3">
+                  <Icon name="edit_note" className="mr-1 text-lg align-text-bottom" />
+                  Doctor Notes
+                </h3>
+                <textarea
+                  value={doctorNotes}
+                  onChange={(e) => setDoctorNotes(e.target.value)}
+                  placeholder="Add medical observations, recommendations, or follow-up instructions..."
+                  rows={4}
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary resize-vertical"
+                />
+                <div className="flex justify-end mt-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => saveDoctorNotes(selectedAssessment.id)}
+                    disabled={savingNotes || !doctorNotes.trim()}
+                  >
+                    {savingNotes ? (
+                      <>
+                        <Icon name="progress_activity" className="mr-1 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Icon name="save" className="mr-1" />
+                        Save Notes
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Audit History Section */}
+              <div className="border-t border-gray-200 pt-6">
+                <h3 className="font-bold text-[#181410] mb-3">
+                  <Icon name="history" className="mr-1 text-lg align-text-bottom" />
+                  Audit History
+                </h3>
+                {auditLoading ? (
+                  <div className="flex justify-center py-6">
+                    <Icon name="progress_activity" className="text-3xl text-primary animate-spin" />
+                  </div>
+                ) : auditHistory.length > 0 ? (
+                  <div className="space-y-3 max-h-60 overflow-y-auto">
+                    {auditHistory.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 bg-gray-50"
+                      >
+                        <div className={`px-2 py-1 rounded text-xs font-medium whitespace-nowrap ${getActionColor(entry.action)}`}>
+                          {getActionLabel(entry.action)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-700">
+                            by{' '}
+                            <span className="font-medium">
+                              {entry.performer
+                                ? `${entry.performer.first_name} ${entry.performer.last_name}`
+                                : 'Unknown'}
+                            </span>
+                          </p>
+                          {entry.notes && (
+                            <p className="text-xs text-gray-500 mt-1 truncate" title={entry.notes}>
+                              {entry.notes}
+                            </p>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-400 whitespace-nowrap">
+                          {format(new Date(entry.created_at), 'MMM dd, yyyy HH:mm')}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 text-center py-4">No audit records yet</p>
+                )}
+              </div>
             </div>
 
             <div className="mt-8 pt-6 border-t border-gray-200 flex gap-3">
-              <Button variant="secondary" onClick={() => setSelectedAssessment(null)} className="flex-1">
+              <Button variant="secondary" onClick={closeAssessmentDetail} className="flex-1">
                 Close
               </Button>
-              {!selectedAssessment.medical_clearance && (
+              {!selectedAssessment.flagged_high_risk && (
+                <Button
+                  variant="secondary"
+                  onClick={() => flagHighRisk(selectedAssessment.id)}
+                  className="flex-1 bg-orange-50 text-orange-700 hover:bg-orange-100"
+                >
+                  <Icon name="warning" className="mr-1" />
+                  Flag High Risk
+                </Button>
+              )}
+              {!selectedAssessment.medical_clearance ? (
                 <Button
                   variant="primary"
                   onClick={() => {
                     updateClearance(selectedAssessment.id, true);
-                    setSelectedAssessment(null);
+                    closeAssessmentDetail();
                   }}
                   className="flex-1"
                 >
                   Approve Clearance
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    updateClearance(selectedAssessment.id, false);
+                    closeAssessmentDetail();
+                  }}
+                  className="flex-1 bg-red-50 text-red-700 hover:bg-red-100"
+                >
+                  <Icon name="close" className="mr-1" />
+                  Revoke Clearance
                 </Button>
               )}
             </div>

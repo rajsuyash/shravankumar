@@ -6,22 +6,36 @@ import { Icon } from './ui';
 interface ProtectedRouteProps {
   children: ReactNode;
   requireAdmin?: boolean;
+  allowedRoles?: string[];
 }
 
-export const ProtectedRoute = ({ children, requireAdmin = false }: ProtectedRouteProps) => {
-  const { user, loading, isAdmin } = useAuth();
+export const ProtectedRoute = ({
+  children,
+  requireAdmin = false,
+  allowedRoles,
+}: ProtectedRouteProps) => {
+  const { user, loading, isAdmin, userType } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const hasAccess = (() => {
+    if (!user) return false;
+    if (requireAdmin) return isAdmin;
+    if (allowedRoles && allowedRoles.length > 0) {
+      return userType !== null && allowedRoles.includes(userType);
+    }
+    return true; // authenticated, no role restriction
+  })();
 
   useEffect(() => {
     if (!loading) {
       if (!user) {
         navigate('/login', { state: { from: location } });
-      } else if (requireAdmin && !isAdmin) {
+      } else if (!hasAccess) {
         navigate('/', { replace: true });
       }
     }
-  }, [user, loading, requireAdmin, isAdmin, navigate, location]);
+  }, [user, loading, hasAccess, navigate, location]);
 
   if (loading) {
     return (
@@ -35,7 +49,7 @@ export const ProtectedRoute = ({ children, requireAdmin = false }: ProtectedRout
     return null;
   }
 
-  if (requireAdmin && !isAdmin) {
+  if (!hasAccess) {
     return (
       <div className="min-h-screen bg-background-light flex items-center justify-center">
         <div className="text-center">

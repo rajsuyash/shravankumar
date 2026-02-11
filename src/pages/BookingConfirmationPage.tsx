@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
-import { generateBookingConfirmationPDF, generateItineraryPDF, downloadPDF } from '../lib/pdfGenerator';
+import { generateBookingConfirmationPDF, generateItineraryPDF } from '../lib/pdfGenerator';
 
 interface TravelerDetail {
   firstName: string;
@@ -20,26 +20,17 @@ interface Booking {
   return_date: string;
   number_of_travelers: number;
   total_price: number;
-  traveler_details: TravelerDetail[];
+  payment_status: string;
+  booking_status: string;
   special_requirements?: string;
+  traveler_details: TravelerDetail[];
   circuits: {
     name: string;
     starts_from_city: string;
     duration_days: number;
-    itinerary?: Array<{
-      day: number;
-      title: string;
-      activities: string[];
-      accommodation?: string;
-    }>;
+    base_price: number;
+    medical_surcharge: number;
   };
-}
-
-interface EmergencyContact {
-  name: string;
-  relationship: string;
-  phone: string;
-  email?: string;
 }
 
 export const BookingConfirmationPage: React.FC = () => {
@@ -48,8 +39,8 @@ export const BookingConfirmationPage: React.FC = () => {
   const bookingRef = searchParams.get('ref');
 
   const [booking, setBooking] = useState<Booking | null>(null);
-  const [emergencyContact, setEmergencyContact] = useState<EmergencyContact | null>(null);
   const [loading, setLoading] = useState(true);
+  const [downloadingItinerary, setDownloadingItinerary] = useState(false);
 
   useEffect(() => {
     if (bookingRef) {
@@ -69,7 +60,8 @@ export const BookingConfirmationPage: React.FC = () => {
             name,
             starts_from_city,
             duration_days,
-            itinerary
+            base_price,
+            medical_surcharge
           )
         `
         )
@@ -78,20 +70,6 @@ export const BookingConfirmationPage: React.FC = () => {
 
       if (error) throw error;
       setBooking(data);
-
-      // Fetch emergency contact
-      if (data?.id) {
-        const { data: contactData } = await supabase
-          .from('emergency_contacts')
-          .select('*')
-          .eq('booking_id', data.id)
-          .eq('is_primary', true)
-          .maybeSingle();
-        
-        if (contactData) {
-          setEmergencyContact(contactData);
-        }
-      }
     } catch (error) {
       console.error('Error fetching booking:', error);
     } finally {
@@ -99,48 +77,28 @@ export const BookingConfirmationPage: React.FC = () => {
     }
   };
 
-  const handleDownloadConfirmation = () => {
+  const handleDownloadItinerary = async () => {
     if (!booking) return;
+    try {
+      setDownloadingItinerary(true);
+      const { data: circuitData, error: circuitError } = await supabase
+        .from('circuits')
+        .select('name, description, duration_days, difficulty_level, starts_from_city, base_price, medical_surcharge, itinerary, included_services, medical_support_details')
+        .eq('name', booking.circuits.name)
+        .maybeSingle();
 
-    const pdfData = {
-      bookingReference: booking.booking_reference,
-      circuitName: booking.circuits.name,
-      departureDate: booking.departure_date,
-      returnDate: booking.return_date,
-      numberOfTravelers: booking.number_of_travelers,
-      totalPrice: booking.total_price,
-      travelers: booking.traveler_details.map(t => ({
-        firstName: t.firstName,
-        lastName: t.lastName,
-        age: t.age,
-        gender: (t as TravelerDetail & { gender?: string }).gender || 'Not specified',
-        phone: t.phone || '',
-        email: t.email,
-      })),
-      emergencyContact: emergencyContact || {
-        name: 'Not provided',
-        relationship: 'N/A',
-        phone: 'N/A',
-      },
-      specialRequirements: booking.special_requirements,
-    };
+      if (circuitError || !circuitData) {
+        alert('Could not fetch circuit details. Please try again.');
+        return;
+      }
 
-    const doc = generateBookingConfirmationPDF(pdfData);
-    downloadPDF(doc, `ShravanKumar-Booking-${booking.booking_reference}.pdf`);
-  };
-
-  const handleDownloadItinerary = () => {
-    if (!booking || !booking.circuits.itinerary) {
-      alert('Itinerary not available for this circuit');
-      return;
+      generateItineraryPDF(circuitData, booking);
+    } catch (error) {
+      console.error('Error downloading itinerary:', error);
+      alert('Failed to generate itinerary PDF.');
+    } finally {
+      setDownloadingItinerary(false);
     }
-
-    const doc = generateItineraryPDF(
-      booking.circuits.name,
-      booking.circuits.itinerary,
-      booking.departure_date
-    );
-    downloadPDF(doc, `ShravanKumar-Itinerary-${booking.circuits.name.replace(/\s+/g, '-')}.pdf`);
   };
 
   if (loading) {
@@ -316,38 +274,28 @@ export const BookingConfirmationPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Download Actions */}
-        <div className="bg-white rounded-xl p-6 border border-[#e7dfda] mb-8">
-          <h3 className="font-bold text-[#181410] mb-4">Download Documents</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button
-              onClick={handleDownloadConfirmation}
-              className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-primary hover:bg-primary/5 transition-colors"
-            >
-              <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
-                <Icon name="receipt_long" className="text-primary text-xl" />
-              </div>
-              <div className="text-left">
-                <p className="font-medium text-[#181410]">Booking Confirmation</p>
-                <p className="text-sm text-gray-600">Download PDF with all details</p>
-              </div>
-            </button>
-            <button
-              onClick={handleDownloadItinerary}
-              className="flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:border-primary hover:bg-primary/5 transition-colors"
-            >
-              <div className="w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
-                <Icon name="map" className="text-primary text-xl" />
-              </div>
-              <div className="text-left">
-                <p className="font-medium text-[#181410]">Journey Itinerary</p>
-                <p className="text-sm text-gray-600">Day-by-day schedule PDF</p>
-              </div>
-            </button>
-          </div>
-        </div>
-
         <div className="flex flex-wrap gap-4 justify-center">
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => generateBookingConfirmationPDF(booking)}
+          >
+            <Icon name="download" className="mr-2" />
+            Download Confirmation PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={handleDownloadItinerary}
+            disabled={downloadingItinerary}
+          >
+            {downloadingItinerary ? (
+              <Icon name="progress_activity" className="mr-2 animate-spin" />
+            ) : (
+              <Icon name="description" className="mr-2" />
+            )}
+            Download Itinerary PDF
+          </Button>
           <Button variant="primary" size="lg" onClick={() => navigate('/dashboard')}>
             <Icon name="dashboard" className="mr-2" />
             Go to Dashboard

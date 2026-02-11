@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase';
 interface UserProfile {
   id: string;
   email: string;
-  user_type: 'pilgrim' | 'coordinator' | 'medical' | 'admin';
+  user_type: 'customer' | 'pilgrim' | 'coordinator' | 'medical' | 'admin';
   full_name?: string;
   phone?: string;
 }
@@ -16,6 +16,7 @@ interface AuthContextType {
   userProfile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
+  userType: UserProfile['user_type'] | null;
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signInWithGoogle: () => Promise<{ error: AuthError | null }>;
@@ -42,7 +43,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchUserProfile = async (userId: string) => {
+  const fetchUserProfile = async (userId: string, userEmail?: string) => {
     const { data, error } = await supabase
       .from('users')
       .select('id, email, user_type, full_name, phone')
@@ -54,6 +55,25 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       return null;
     }
 
+    // If no profile exists (trigger may not have fired), create one
+    if (!data && userEmail) {
+      const { data: newProfile, error: insertError } = await supabase
+        .from('users')
+        .insert({
+          id: userId,
+          email: userEmail,
+          user_type: 'customer',
+        })
+        .select('id, email, user_type, full_name, phone')
+        .single();
+
+      if (insertError) {
+        console.error('Error creating user profile:', insertError);
+        return null;
+      }
+      return newProfile;
+    }
+
     return data;
   };
 
@@ -63,7 +83,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       setUser(session?.user ?? null);
 
       if (session?.user) {
-        const profile = await fetchUserProfile(session.user.id);
+        const profile = await fetchUserProfile(session.user.id, session.user.email);
         setUserProfile(profile);
       } else {
         setUserProfile(null);
@@ -78,7 +98,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          const profile = await fetchUserProfile(session.user.id);
+          const profile = await fetchUserProfile(session.user.id, session.user.email);
           setUserProfile(profile);
         } else {
           setUserProfile(null);
@@ -142,6 +162,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
     userProfile,
     loading,
     isAdmin: userProfile?.user_type === 'admin',
+    userType: userProfile?.user_type ?? null,
     signIn,
     signUp,
     signInWithGoogle,

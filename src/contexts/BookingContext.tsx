@@ -17,19 +17,6 @@ interface EmergencyContact {
   email: string;
 }
 
-interface DiabetesDetails {
-  type: string;
-  onInsulin: boolean;
-  insulinType?: string;
-  lastHbA1c?: string;
-}
-
-interface HeartConditionDetails {
-  condition: string;
-  hasPacemaker: boolean;
-  lastEcgDate?: string;
-}
-
 interface MedicalAssessment {
   chronicDiseases: string[];
   medications: string[];
@@ -37,10 +24,20 @@ interface MedicalAssessment {
   mobilityLevel: string;
   oxygenRequired: boolean;
   dietaryRestrictions: string;
-  // Conditional fields
-  diabetesDetails?: DiabetesDetails;
-  heartConditionDetails?: HeartConditionDetails;
-  documents?: string[];
+  // Conditional fields for specific diseases
+  insulinDependent?: boolean;
+  bloodSugarRange?: string;
+  hba1cLevel?: string;
+  hasPacemaker?: boolean;
+  lastEcgDate?: string;
+  currentBpSystolic?: string;
+  currentBpDiastolic?: string;
+  inhalerType?: string;
+  lastAsthmaAttackDate?: string;
+  dialysisRequired?: boolean;
+  lastCreatinineLevel?: string;
+  // Document upload URLs
+  medicalDocuments?: { name: string; url: string }[];
 }
 
 interface BookingData {
