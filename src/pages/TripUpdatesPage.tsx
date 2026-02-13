@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
+import toast from '../lib/toast';
 
 interface TripUpdate {
   id: string;
@@ -107,7 +108,7 @@ export const TripUpdatesPage: React.FC = () => {
       fetchTripAndUpdates();
     } catch (error) {
       console.error('Error adding update:', error);
-      alert('Failed to add update. Please try again.');
+      toast.error('Failed to add update. Please try again.');
     }
   };
 

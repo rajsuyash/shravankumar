@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Icon, Button } from '../components/ui';
 import { format, addDays } from 'date-fns';
+import toast from '../lib/toast';
 
 interface TravelerDetail {
   firstName: string;
@@ -101,13 +102,13 @@ export const CoordinatorDashboard: React.FC = () => {
     e.preventDefault();
     
     if (!tripForm.circuit_id || !tripForm.departure_date) {
-      alert('Please fill in all required fields');
+      toast.error('Please fill in all required fields');
       return;
     }
 
     const selectedCircuit = circuits.find(c => c.id === tripForm.circuit_id);
     if (!selectedCircuit) {
-      alert('Please select a valid circuit');
+      toast.error('Please select a valid circuit');
       return;
     }
 
@@ -135,10 +136,10 @@ export const CoordinatorDashboard: React.FC = () => {
       setIsCreateModalOpen(false);
       setTripForm({ circuit_id: '', departure_date: '' });
       fetchTrips();
-      alert('Trip created successfully!');
+      toast.success('Trip created successfully!');
     } catch (error) {
       console.error('Error creating trip:', error);
-      alert('Failed to create trip. Please try again.');
+      toast.error('Failed to create trip. Please try again.');
     } finally {
       setCreating(false);
     }
@@ -153,10 +154,10 @@ export const CoordinatorDashboard: React.FC = () => {
 
       if (error) throw error;
       fetchTrips();
-      alert(`Trip status updated to ${newStatus.replace('_', ' ')}`);
+      toast.success(`Trip status updated to ${newStatus.replace('_', ' ')}`);
     } catch (error) {
       console.error('Error updating trip status:', error);
-      alert('Failed to update trip status');
+      toast.error('Failed to update trip status');
     }
   };
 

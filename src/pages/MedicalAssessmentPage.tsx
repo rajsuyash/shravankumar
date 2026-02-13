@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useBooking } from '../contexts/BookingContext';
 import { Button, Icon } from '../components/ui';
 import { supabase } from '../lib/supabase';
+import toast from '../lib/toast';
 
 interface MedicalAssessmentData {
   chronicDiseases: string[];
@@ -190,12 +191,12 @@ export const MedicalAssessmentPage: React.FC = () => {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-        alert(`"${file.name}" is not a supported file type. Please upload PDF, JPG, or PNG files only.`);
+        toast.error(`"${file.name}" is not a supported file type. Please upload PDF, JPG, or PNG files only.`);
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
       if (file.size > MAX_FILE_SIZE) {
-        alert(`"${file.name}" exceeds the 10MB size limit. Please upload a smaller file.`);
+        toast.error(`"${file.name}" exceeds the 10MB size limit. Please upload a smaller file.`);
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }

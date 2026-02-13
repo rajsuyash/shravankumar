@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { Circuit } from '../types/database';
 import { Button, Icon } from '../components/ui';
 import { format, addDays } from 'date-fns';
+import toast from '../lib/toast';
 
 export const BookingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -240,19 +241,19 @@ export const BookingPage: React.FC = () => {
 
   const handleNext = () => {
     if (currentStep === 1 && !validateStep1()) {
-      alert('Please fill in all required fields');
+      toast.error('Please fill in all required fields');
       return;
     }
     if (currentStep === 1 && availabilityInfo?.isFullyBooked) {
-      alert('This date is fully booked. Please select a different departure date.');
+      toast.error('This date is fully booked. Please select a different departure date.');
       return;
     }
     if (currentStep === 2 && !validateStep2()) {
-      alert('Please fill in all traveler details');
+      toast.error('Please fill in all traveler details');
       return;
     }
     if (currentStep === 3 && !validateStep3()) {
-      alert('Please provide emergency contact details');
+      toast.error('Please provide emergency contact details');
       return;
     }
 

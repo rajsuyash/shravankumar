@@ -1,11 +1,12 @@
 import React, { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useBooking } from '../contexts/BookingContext';
 import { supabase } from '../lib/supabase';
 import { queueBookingConfirmationEmail } from '../lib/emailService';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
+import toast from '../lib/toast';
 
 const RAZORPAY_KEY_ID = import.meta.env.VITE_RAZORPAY_KEY_ID as string | undefined;
 const isRazorpayEnabled = Boolean(RAZORPAY_KEY_ID && window.Razorpay);
@@ -18,11 +19,49 @@ export const PaymentPage: React.FC = () => {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   /**
+   * Creates a Razorpay order server-side via Supabase Edge Function.
+   */
+  const createServerOrder = useCallback(async () => {
+    const { data, error } = await supabase.functions.invoke('create-razorpay-order', {
+      body: {
+        amount: bookingData.totalPrice,
+        currency: 'INR',
+        circuit_id: bookingData.circuitId,
+        notes: { travelers: String(bookingData.numberOfTravelers) },
+      },
+    });
+
+    if (error || !data?.order_id) {
+      throw new Error('Failed to create payment order. Please try again.');
+    }
+
+    return data as { order_id: string; amount: number; currency: string; key_id: string };
+  }, [bookingData]);
+
+  /**
+   * Verifies Razorpay payment signature server-side.
+   */
+  const verifyPaymentServer = useCallback(
+    async (razorpay_order_id: string, razorpay_payment_id: string, razorpay_signature: string) => {
+      const { data, error } = await supabase.functions.invoke('verify-payment', {
+        body: { razorpay_order_id, razorpay_payment_id, razorpay_signature },
+      });
+
+      if (error || !data?.verified) {
+        throw new Error('Payment verification failed. Please contact support.');
+      }
+
+      return data as { verified: boolean; order_id: string; payment_id: string };
+    },
+    []
+  );
+
+  /**
    * Creates the booking and all associated records in Supabase.
-   * Called only after successful payment (Razorpay or demo).
+   * Called only after successful and verified payment.
    */
   const createBookingRecords = useCallback(
-    async (paymentMethod: string, paymentId?: string) => {
+    async (paymentMethod: string, paymentId?: string, orderId?: string) => {
       const bookingReference = `BK${Date.now().toString().slice(-8)}`;
 
       const { data: booking, error: bookingError } = await supabase
@@ -79,7 +118,18 @@ export const PaymentPage: React.FC = () => {
         payment_method: paymentMethod,
         payment_status: 'success',
         ...(paymentId ? { transaction_id: paymentId } : {}),
+        ...(orderId ? { razorpay_order_id: orderId } : {}),
       });
+
+      // Create in-app notification
+      if (user?.id) {
+        await supabase.from('notifications').insert({
+          user_id: user.id,
+          type: 'booking_confirmed',
+          title: 'Booking Confirmed!',
+          message: `Your booking for ${bookingData.circuitName} (Ref: ${bookingReference}) has been confirmed. Our medical team will review your assessments within 24 hours.`,
+        });
+      }
 
       // Queue booking confirmation email
       await queueBookingConfirmationEmail(
@@ -112,58 +162,59 @@ export const PaymentPage: React.FC = () => {
   );
 
   /**
-   * Opens Razorpay checkout modal and returns a promise that resolves
-   * with the payment response on success, or rejects on failure/dismiss.
+   * Opens Razorpay checkout modal with a server-created order_id.
    */
-  const openRazorpayCheckout = useCallback((): Promise<RazorpaySuccessResponse> => {
-    return new Promise((resolve, reject) => {
-      const options: RazorpayOptions = {
-        key: RAZORPAY_KEY_ID!,
-        amount: Math.round(bookingData.totalPrice * 100), // amount in paise
-        currency: 'INR',
-        name: 'Shravan Kumar Pilgrimage',
-        description: `Booking for ${bookingData.circuitName}`,
-        prefill: {
-          email: user?.email || '',
-        },
-        theme: {
-          color: '#e36b2b',
-        },
-        notes: {
-          circuit_id: bookingData.circuitId,
-          travelers: String(bookingData.numberOfTravelers),
-        },
-        handler: (response: RazorpaySuccessResponse) => {
-          resolve(response);
-        },
-        modal: {
-          ondismiss: () => {
-            reject(new Error('Payment cancelled by user'));
+  const openRazorpayCheckout = useCallback(
+    (orderId: string, keyId: string): Promise<RazorpaySuccessResponse> => {
+      return new Promise((resolve, reject) => {
+        const options: RazorpayOptions = {
+          key: keyId,
+          amount: Math.round(bookingData.totalPrice * 100),
+          currency: 'INR',
+          name: 'Shravan Kumar Pilgrimage',
+          description: `Booking for ${bookingData.circuitName}`,
+          order_id: orderId,
+          prefill: {
+            email: user?.email || '',
           },
-          confirm_close: true,
-        },
-      };
+          theme: {
+            color: '#e36b2b',
+          },
+          handler: (response: RazorpaySuccessResponse) => {
+            resolve(response);
+          },
+          modal: {
+            ondismiss: () => {
+              reject(new Error('Payment cancelled by user'));
+            },
+            confirm_close: true,
+          },
+        };
 
-      const razorpayInstance = new window.Razorpay(options);
+        const razorpayInstance = new window.Razorpay(options);
 
-      razorpayInstance.on('payment.failed', (response: RazorpayFailureResponse) => {
-        reject(
-          new Error(response.error.description || 'Payment failed. Please try again.')
-        );
+        razorpayInstance.on('payment.failed', (response: RazorpayFailureResponse) => {
+          reject(
+            new Error(response.error.description || 'Payment failed. Please try again.')
+          );
+        });
+
+        razorpayInstance.open();
       });
-
-      razorpayInstance.open();
-    });
-  }, [bookingData, user]);
+    },
+    [bookingData, user]
+  );
 
   /**
-   * Handles the full payment flow:
-   * - If Razorpay is enabled, opens the checkout modal first, then creates booking on success.
-   * - If Razorpay is not configured (demo mode), creates booking immediately with demo payment.
+   * Handles the full secure payment flow:
+   * 1. Create order server-side
+   * 2. Open Razorpay checkout with order_id
+   * 3. Verify signature server-side
+   * 4. Create booking records only after verification
    */
   const handlePayment = async () => {
     if (!agreedToTerms) {
-      alert('Please agree to the terms and conditions');
+      toast.error('Please agree to the terms and conditions');
       return;
     }
 
@@ -171,21 +222,34 @@ export const PaymentPage: React.FC = () => {
 
     try {
       if (isRazorpayEnabled) {
-        // --- Razorpay live payment flow ---
-        const paymentResponse = await openRazorpayCheckout();
+        // Step 1: Create order server-side
+        const order = await createServerOrder();
 
-        // Payment succeeded -- now create booking records
-        const bookingReference = await createBookingRecords(
-          'razorpay',
-          paymentResponse.razorpay_payment_id
+        // Step 2: Open Razorpay checkout with server-created order
+        const paymentResponse = await openRazorpayCheckout(order.order_id, order.key_id);
+
+        // Step 3: Verify payment signature server-side
+        await verifyPaymentServer(
+          paymentResponse.razorpay_order_id!,
+          paymentResponse.razorpay_payment_id,
+          paymentResponse.razorpay_signature!
         );
 
+        // Step 4: Only create booking after verified payment
+        const bookingReference = await createBookingRecords(
+          'razorpay',
+          paymentResponse.razorpay_payment_id,
+          paymentResponse.razorpay_order_id
+        );
+
+        toast.success('Payment successful! Booking confirmed.');
         navigate(`/booking/confirmation?ref=${bookingReference}`);
         resetBooking();
       } else {
-        // --- Demo / fallback payment flow ---
+        // Demo / fallback payment flow
         const bookingReference = await createBookingRecords('demo');
 
+        toast.success('Demo booking created successfully!');
         navigate(`/booking/confirmation?ref=${bookingReference}`);
         resetBooking();
       }
@@ -194,9 +258,8 @@ export const PaymentPage: React.FC = () => {
       const message =
         error instanceof Error ? error.message : 'There was an error processing your payment.';
 
-      // Don't show alert for user-cancelled payments
       if (message !== 'Payment cancelled by user') {
-        alert(message);
+        toast.error(message);
       }
     } finally {
       setProcessing(false);
@@ -236,7 +299,7 @@ export const PaymentPage: React.FC = () => {
                     <h3 className="font-bold text-green-900 mb-2">Secure Payment</h3>
                     <p className="text-sm text-green-800">
                       Your payment is secured with bank-level encryption. We never store your card
-                      details.
+                      details. All payments are verified server-side.
                     </p>
                   </div>
                 </div>
@@ -301,17 +364,17 @@ export const PaymentPage: React.FC = () => {
                     />
                     <span className="text-sm text-gray-700">
                       I agree to the{' '}
-                      <a href="#" className="text-primary underline">
+                      <Link to="/terms" className="text-primary underline">
                         Terms and Conditions
-                      </a>
+                      </Link>
                       ,{' '}
-                      <a href="#" className="text-primary underline">
+                      <Link to="/cancellation-policy" className="text-primary underline">
                         Cancellation Policy
-                      </a>
+                      </Link>
                       , and{' '}
-                      <a href="#" className="text-primary underline">
+                      <Link to="/medical-disclosure" className="text-primary underline">
                         Medical Disclosure Agreement
-                      </a>
+                      </Link>
                       . I understand that accurate medical information is crucial for the safety of
                       all travelers.
                     </span>

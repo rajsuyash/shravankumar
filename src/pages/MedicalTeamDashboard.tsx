@@ -2,8 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { queueMedicalClearanceEmail } from '../lib/emailService';
+import { createNotification } from '../lib/notificationService';
 import { Icon, Button, Badge } from '../components/ui';
 import { format } from 'date-fns';
+import toast from '../lib/toast';
 
 interface MedicalAssessment {
   id: string;
@@ -155,7 +157,7 @@ export const MedicalTeamDashboard: React.FC = () => {
       // Log to audit trail
       await logAuditTrail(assessmentId, cleared ? 'approved' : 'revoked');
 
-      // If approving, send medical clearance email
+      // If approving, send medical clearance email and notification
       if (cleared) {
         const assessment = assessments.find((a) => a.id === assessmentId);
         if (assessment) {
@@ -166,14 +168,22 @@ export const MedicalTeamDashboard: React.FC = () => {
             circuitName: assessment.bookings.circuits.name,
             departureDate: format(new Date(assessment.bookings.departure_date), 'MMM dd, yyyy'),
           });
+
+          // In-app notification for pilgrim
+          await createNotification(
+            assessment.pilgrim_id,
+            'medical_clearance',
+            'Medical Clearance Approved',
+            `Your medical assessment for ${assessment.bookings.circuits.name} has been approved. You are cleared for the pilgrimage.`,
+          );
         }
       }
 
       fetchAssessments();
-      alert(`Medical clearance ${cleared ? 'approved' : 'revoked'} successfully`);
+      toast.success(`Medical clearance ${cleared ? 'approved' : 'revoked'} successfully`);
     } catch (error) {
       console.error('Error updating clearance:', error);
-      alert('Failed to update clearance');
+      toast.error('Failed to update clearance');
     }
   };
 
@@ -196,10 +206,10 @@ export const MedicalTeamDashboard: React.FC = () => {
       fetchAssessments();
       // Refresh audit history if the modal is open
       fetchAuditHistory(assessmentId);
-      alert('Patient flagged as high risk');
+      toast.success('Patient flagged as high risk');
     } catch (error) {
       console.error('Error flagging high risk:', error);
-      alert('Failed to flag patient');
+      toast.error('Failed to flag patient');
     }
   };
 
@@ -224,10 +234,10 @@ export const MedicalTeamDashboard: React.FC = () => {
 
       fetchAssessments();
       fetchAuditHistory(assessmentId);
-      alert('Doctor notes saved');
+      toast.success('Doctor notes saved');
     } catch (error) {
       console.error('Error saving doctor notes:', error);
-      alert('Failed to save notes');
+      toast.error('Failed to save notes');
     } finally {
       setSavingNotes(false);
     }

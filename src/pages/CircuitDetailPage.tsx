@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Circuit } from '../types/database';
 import { supabase } from '../lib/supabase';
 import { Icon, Button } from '../components/ui';
+import { ReviewsSection } from '../components/reviews/ReviewsSection';
 
 export const CircuitDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -253,6 +254,11 @@ export const CircuitDetailPage: React.FC = () => {
                   </div>
                 ))}
               </div>
+            </section>
+
+            {/* Reviews */}
+            <section>
+              <ReviewsSection circuitId={circuit.id} />
             </section>
 
             {/* Family Stories */}

@@ -5,6 +5,7 @@ import { Icon, Button, Badge } from '../components/ui';
 import { format } from 'date-fns';
 import { uploadCircuitImage, deleteCircuitImage } from '../lib/imageUpload';
 import { processEmailQueue, getEmailQueueStats, getRecentEmails } from '../lib/emailService';
+import toast from '../lib/toast';
 
 interface CircuitItem {
   id: string;
@@ -99,7 +100,19 @@ const VENDOR_TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
-type ActiveSection = 'overview' | 'users' | 'vendors' | 'reports';
+type ActiveSection = 'overview' | 'users' | 'vendors' | 'reports' | 'reviews';
+
+interface ReviewItem {
+  id: string;
+  circuit_id: string;
+  user_id: string;
+  overall_rating: number;
+  review_text: string;
+  status: string;
+  created_at: string;
+  users?: { full_name?: string; email?: string };
+  circuits?: { name: string };
+}
 
 export const AdminDashboard: React.FC = () => {
   const { user } = useAuth();
@@ -170,6 +183,28 @@ export const AdminDashboard: React.FC = () => {
   const [recentEmails, setRecentEmails] = useState<{ id: string; to_email: string; subject: string; status: string; created_at: string; sent_at?: string; error_message?: string }[]>([]);
   const [emailQueueLoading, setEmailQueueLoading] = useState(false);
   const [processingQueue, setProcessingQueue] = useState(false);
+
+  // Reviews state
+  const [reviews, setReviews] = useState<ReviewItem[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+
+  // Enhanced circuit form fields
+  const [circuitTab, setCircuitTab] = useState<'basic' | 'itinerary' | 'services' | 'policies'>('basic');
+  const [extendedFormData, setExtendedFormData] = useState({
+    difficulty_level: 'moderate' as string,
+    medical_surcharge: 0,
+    max_group_size: 20,
+    min_age: 60,
+    starts_from_city: '',
+    accessibility_rating: 3,
+    itinerary: [] as { day: number; title: string; activities: string[] }[],
+    included_services: [] as string[],
+    excluded_services: [] as string[],
+    accommodation_details: '',
+    transportation_details: '',
+    medical_support_details: '',
+    cancellation_policy: '',
+  });
 
   useEffect(() => {
     fetchDashboardData();
@@ -321,7 +356,7 @@ export const AdminDashboard: React.FC = () => {
       fetchVendors();
     } catch (error) {
       console.error('Error saving vendor:', error);
-      alert('Failed to save vendor. Please try again.');
+      toast.error('Failed to save vendor. Please try again.');
     }
   };
 
@@ -336,7 +371,7 @@ export const AdminDashboard: React.FC = () => {
       setVendors((prev) => prev.filter((v) => v.id !== vendorId));
     } catch (error) {
       console.error('Error deleting vendor:', error);
-      alert('Failed to delete vendor.');
+      toast.error('Failed to delete vendor.');
     }
   };
 
@@ -361,14 +396,42 @@ export const AdminDashboard: React.FC = () => {
     try {
       setProcessingQueue(true);
       const result = await processEmailQueue();
-      alert(`Email queue processed: ${result.sent || 0} sent, ${result.failed || 0} failed`);
-      // Refresh stats after processing
+      toast.info(`Email queue processed: ${result.sent || 0} sent, ${result.failed || 0} failed`);
       fetchEmailQueueData();
     } catch (error) {
       console.error('Error processing email queue:', error);
-      alert('Failed to process email queue.');
+      toast.error('Failed to process email queue.');
     } finally {
       setProcessingQueue(false);
+    }
+  };
+
+  // Reviews management
+  const fetchReviews = async () => {
+    setReviewsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('reviews')
+        .select('*, users(full_name, email), circuits(name)')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      setReviews((data || []) as ReviewItem[]);
+    } catch (error) {
+      console.error('Error fetching reviews:', error);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
+
+  const updateReviewStatus = async (reviewId: string, status: 'approved' | 'rejected') => {
+    try {
+      const { error } = await supabase.from('reviews').update({ status }).eq('id', reviewId);
+      if (error) throw error;
+      setReviews((prev) => prev.map((r) => (r.id === reviewId ? { ...r, status } : r)));
+      toast.success(`Review ${status}`);
+    } catch (error) {
+      console.error('Error updating review:', error);
+      toast.error('Failed to update review');
     }
   };
 
@@ -383,6 +446,9 @@ export const AdminDashboard: React.FC = () => {
     }
     if (activeSection === 'vendors' && vendors.length === 0) {
       fetchVendors();
+    }
+    if (activeSection === 'reviews' && reviews.length === 0) {
+      fetchReviews();
     }
   }, [activeSection]);
 
@@ -631,7 +697,7 @@ export const AdminDashboard: React.FC = () => {
       });
     } catch (error) {
       console.error('Error deleting image:', error);
-      alert('Failed to delete image');
+      toast.error('Failed to delete image');
     }
   };
 
@@ -678,6 +744,20 @@ export const AdminDashboard: React.FC = () => {
         is_active: formData.is_active,
         featured_image_url: featuredImageUrl,
         images: additionalImages,
+        // Extended fields
+        difficulty_level: extendedFormData.difficulty_level,
+        medical_surcharge: extendedFormData.medical_surcharge,
+        max_group_size: extendedFormData.max_group_size,
+        min_age: extendedFormData.min_age,
+        starts_from_city: extendedFormData.starts_from_city,
+        accessibility_rating: extendedFormData.accessibility_rating,
+        itinerary: extendedFormData.itinerary,
+        included_services: extendedFormData.included_services,
+        excluded_services: extendedFormData.excluded_services,
+        accommodation_details: extendedFormData.accommodation_details,
+        transportation_details: extendedFormData.transportation_details,
+        medical_support_details: extendedFormData.medical_support_details,
+        cancellation_policy: extendedFormData.cancellation_policy,
       };
 
       if (editingCircuit) {
@@ -718,11 +798,11 @@ export const AdminDashboard: React.FC = () => {
 
       await fetchDashboardData();
 
-      alert(`Circuit ${editingCircuit ? 'updated' : 'created'} successfully!`);
+      toast.success(`Circuit ${editingCircuit ? 'updated' : 'created'} successfully!`);
     } catch (error: unknown) {
       console.error('Error saving circuit:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      alert(`Failed to ${editingCircuit ? 'update' : 'create'} circuit: ${errorMessage}`);
+      toast.error(`Failed to ${editingCircuit ? 'update' : 'create'} circuit: ${errorMessage}`);
     } finally {
       setUploadingImage(false);
     }
@@ -827,6 +907,14 @@ export const AdminDashboard: React.FC = () => {
           >
             <Icon name="analytics" className="mr-2" />
             Reports
+          </Button>
+          <Button
+            variant={activeSection === 'reviews' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('reviews')}
+          >
+            <Icon name="rate_review" className="mr-2" />
+            Reviews
           </Button>
         </div>
 
@@ -1505,6 +1593,94 @@ export const AdminDashboard: React.FC = () => {
         )}
       </div>
 
+        {/* ========== REVIEWS SECTION ========== */}
+        {activeSection === 'reviews' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-[#181410]">Review Moderation</h2>
+                <p className="text-sm text-gray-600 mt-1">Approve or reject pilgrim reviews</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={fetchReviews}>
+                <Icon name="refresh" className="mr-1" />
+                Refresh
+              </Button>
+            </div>
+
+            {reviewsLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+              </div>
+            ) : reviews.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 border border-[#e7dfda] text-center">
+                <Icon name="rate_review" className="text-gray-300 text-5xl" />
+                <p className="text-gray-400 mt-3">No reviews yet</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {['pending', 'approved', 'rejected'].map((statusGroup) => {
+                  const groupReviews = reviews.filter((r) => r.status === statusGroup);
+                  if (groupReviews.length === 0) return null;
+                  return (
+                    <div key={statusGroup}>
+                      <h3 className="text-lg font-semibold text-[#181410] mb-3 capitalize flex items-center gap-2">
+                        <span className={`w-2.5 h-2.5 rounded-full ${
+                          statusGroup === 'pending' ? 'bg-yellow-400' : statusGroup === 'approved' ? 'bg-green-400' : 'bg-red-400'
+                        }`} />
+                        {statusGroup} ({groupReviews.length})
+                      </h3>
+                      <div className="space-y-3">
+                        {groupReviews.map((review) => (
+                          <div key={review.id} className="bg-white rounded-xl p-5 border border-[#e7dfda]">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <p className="font-medium text-[#181410]">
+                                  {review.users?.full_name || review.users?.email || 'Unknown'}
+                                </p>
+                                <p className="text-sm text-gray-500">
+                                  {review.circuits?.name || 'Unknown circuit'} &middot;{' '}
+                                  {format(new Date(review.created_at), 'dd MMM yyyy')}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Icon name="star" className="text-amber-400 text-lg" />
+                                <span className="font-bold">{review.overall_rating}</span>
+                              </div>
+                            </div>
+                            {review.review_text && (
+                              <p className="text-sm text-gray-700 mb-3">{review.review_text}</p>
+                            )}
+                            {statusGroup === 'pending' && (
+                              <div className="flex gap-2 pt-2 border-t border-gray-100">
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  onClick={() => updateReviewStatus(review.id, 'approved')}
+                                >
+                                  <Icon name="check" className="mr-1" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => updateReviewStatus(review.id, 'rejected')}
+                                >
+                                  <Icon name="close" className="mr-1" />
+                                  Reject
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
       {/* ========== ADD STAFF MODAL ========== */}
       {isAddStaffModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -1831,6 +2007,162 @@ export const AdminDashboard: React.FC = () => {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                   placeholder="e.g., Delhi, Mumbai, Bangalore"
                 />
+              </div>
+
+              {/* Extended Fields Tabs */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="flex border-b border-gray-200 bg-gray-50">
+                  {(['basic', 'itinerary', 'services', 'policies'] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setCircuitTab(tab)}
+                      className={`flex-1 px-3 py-2 text-xs font-medium capitalize transition-colors ${
+                        circuitTab === tab ? 'bg-white text-primary border-b-2 border-primary' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      {tab === 'basic' ? 'Details' : tab}
+                    </button>
+                  ))}
+                </div>
+                <div className="p-4 space-y-4">
+                  {circuitTab === 'basic' && (
+                    <>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Difficulty Level</label>
+                          <select
+                            value={extendedFormData.difficulty_level}
+                            onChange={(e) => setExtendedFormData({ ...extendedFormData, difficulty_level: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                          >
+                            <option value="easy">Easy</option>
+                            <option value="moderate">Moderate</option>
+                            <option value="challenging">Challenging</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Medical Surcharge (₹)</label>
+                          <input type="number" min="0" value={extendedFormData.medical_surcharge}
+                            onChange={(e) => setExtendedFormData({ ...extendedFormData, medical_surcharge: Number(e.target.value) })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Max Group Size</label>
+                          <input type="number" min="1" value={extendedFormData.max_group_size}
+                            onChange={(e) => setExtendedFormData({ ...extendedFormData, max_group_size: Number(e.target.value) })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Min Age</label>
+                          <input type="number" min="0" value={extendedFormData.min_age}
+                            onChange={(e) => setExtendedFormData({ ...extendedFormData, min_age: Number(e.target.value) })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Accessibility (1-5)</label>
+                          <input type="number" min="1" max="5" value={extendedFormData.accessibility_rating}
+                            onChange={(e) => setExtendedFormData({ ...extendedFormData, accessibility_rating: Number(e.target.value) })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Starts From City</label>
+                        <input type="text" value={extendedFormData.starts_from_city}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, starts_from_city: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder="e.g., New Delhi" />
+                      </div>
+                    </>
+                  )}
+                  {circuitTab === 'itinerary' && (
+                    <>
+                      <p className="text-xs text-gray-500 mb-2">Add day-by-day itinerary</p>
+                      {extendedFormData.itinerary.map((day, i) => (
+                        <div key={i} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-primary">Day {day.day}</span>
+                            <button type="button" onClick={() => setExtendedFormData({
+                              ...extendedFormData,
+                              itinerary: extendedFormData.itinerary.filter((_, idx) => idx !== i),
+                            })} className="text-red-500 text-xs hover:underline">Remove</button>
+                          </div>
+                          <input type="text" value={day.title} placeholder="Day title"
+                            onChange={(e) => {
+                              const updated = [...extendedFormData.itinerary];
+                              updated[i] = { ...updated[i], title: e.target.value };
+                              setExtendedFormData({ ...extendedFormData, itinerary: updated });
+                            }}
+                            className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm" />
+                          <textarea value={day.activities.join('\n')} placeholder="Activities (one per line)"
+                            onChange={(e) => {
+                              const updated = [...extendedFormData.itinerary];
+                              updated[i] = { ...updated[i], activities: e.target.value.split('\n') };
+                              setExtendedFormData({ ...extendedFormData, itinerary: updated });
+                            }}
+                            rows={3}
+                            className="w-full px-3 py-1.5 border border-gray-300 rounded text-sm" />
+                        </div>
+                      ))}
+                      <button type="button" onClick={() => setExtendedFormData({
+                        ...extendedFormData,
+                        itinerary: [...extendedFormData.itinerary, { day: extendedFormData.itinerary.length + 1, title: '', activities: [] }],
+                      })} className="text-sm text-primary font-medium hover:underline flex items-center gap-1">
+                        <Icon name="add" className="text-sm" /> Add Day
+                      </button>
+                    </>
+                  )}
+                  {circuitTab === 'services' && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Included Services (one per line)</label>
+                        <textarea value={extendedFormData.included_services.join('\n')}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, included_services: e.target.value.split('\n').filter(Boolean) })}
+                          rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder="AC Transport&#10;Meals included&#10;Medical team on standby" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Excluded Services (one per line)</label>
+                        <textarea value={extendedFormData.excluded_services.join('\n')}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, excluded_services: e.target.value.split('\n').filter(Boolean) })}
+                          rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder="Personal expenses&#10;Travel insurance&#10;Tips" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Accommodation Details</label>
+                        <textarea value={extendedFormData.accommodation_details}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, accommodation_details: e.target.value })}
+                          rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Transportation Details</label>
+                        <textarea value={extendedFormData.transportation_details}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, transportation_details: e.target.value })}
+                          rows={3} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                      </div>
+                    </>
+                  )}
+                  {circuitTab === 'policies' && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Medical Support Details</label>
+                        <textarea value={extendedFormData.medical_support_details}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, medical_support_details: e.target.value })}
+                          rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder="Describe the medical support infrastructure..." />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Cancellation Policy</label>
+                        <textarea value={extendedFormData.cancellation_policy}
+                          onChange={(e) => setExtendedFormData({ ...extendedFormData, cancellation_policy: e.target.value })}
+                          rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder="Cancellation terms for this circuit..." />
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div>

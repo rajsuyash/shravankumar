@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
 import { Icon, Button } from '../ui';
 import { format } from 'date-fns';
+import toast from '../../lib/toast';
 
 interface PilgrimChecklistItem {
   id: string;
@@ -131,7 +132,7 @@ export const PilgrimChecklist: React.FC<PilgrimChecklistProps> = ({ tripId }) =>
       if (error) throw error;
     } catch (error) {
       console.error(`Error updating ${field}:`, error);
-      alert(`Failed to update ${field.replace(/_/g, ' ')}. Please try again.`);
+      toast.error(`Failed to update ${field.replace(/_/g, ' ')}. Please try again.`);
     } finally {
       setUpdatingId(null);
     }
@@ -148,7 +149,7 @@ export const PilgrimChecklist: React.FC<PilgrimChecklistProps> = ({ tripId }) =>
       if (error) throw error;
     } catch (error) {
       console.error('Error toggling special needs:', error);
-      alert('Failed to update special needs flag.');
+      toast.error('Failed to update special needs flag.');
     } finally {
       setUpdatingId(null);
     }

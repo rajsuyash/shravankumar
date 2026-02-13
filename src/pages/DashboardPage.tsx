@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase';
 import { Button, Icon, Badge } from '../components/ui';
 import { format } from 'date-fns';
 import { generateItineraryPDF, generateBookingConfirmationPDF } from '../lib/pdfGenerator';
+import { ReviewForm } from '../components/reviews/ReviewForm';
+import toast from '../lib/toast';
 
 interface TravelerDetail {
   firstName: string;
@@ -25,6 +27,7 @@ interface MedicalAssessmentData {
 interface Booking {
   id: string;
   booking_reference: string;
+  circuit_id: string;
   departure_date: string;
   return_date: string;
   number_of_travelers: number;
@@ -311,6 +314,7 @@ export const DashboardPage: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past' | 'all'>('upcoming');
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [reviewBooking, setReviewBooking] = useState<Booking | null>(null);
 
   const fetchBookings = useCallback(async (isBackground = false) => {
     try {
@@ -421,14 +425,14 @@ export const DashboardPage: React.FC = () => {
         .maybeSingle();
 
       if (circuitError || !circuitData) {
-        alert('Could not fetch circuit details. Please try again.');
+        toast.error('Could not fetch circuit details. Please try again.');
         return;
       }
 
       generateItineraryPDF(circuitData, booking);
     } catch (error) {
       console.error('Error downloading itinerary:', error);
-      alert('Failed to generate itinerary PDF. Please try again.');
+      toast.error('Failed to generate itinerary PDF. Please try again.');
     } finally {
       setDownloadingItinerary(null);
     }
@@ -723,6 +727,19 @@ export const DashboardPage: React.FC = () => {
                               Track Trip
                             </Button>
                           )}
+                          {booking.booking_status === 'completed' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setReviewBooking(booking);
+                              }}
+                            >
+                              <Icon name="rate_review" className="mr-1" />
+                              Write Review
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -748,6 +765,16 @@ export const DashboardPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {reviewBooking && (
+        <ReviewForm
+          circuitId={reviewBooking.circuit_id}
+          bookingId={reviewBooking.id}
+          circuitName={reviewBooking.circuits.name}
+          onSubmitted={() => setReviewBooking(null)}
+          onCancel={() => setReviewBooking(null)}
+        />
+      )}
     </div>
   );
 };

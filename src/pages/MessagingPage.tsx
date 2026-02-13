@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Icon, Button } from '../components/ui';
 import { format } from 'date-fns';
+import toast from '../lib/toast';
 
 interface Message {
   id: string;
@@ -95,7 +96,7 @@ export const MessagingPage: React.FC = () => {
       fetchMessages();
     } catch (error) {
       console.error('Error sending message:', error);
-      alert('Failed to send message. Please try again.');
+      toast.error('Failed to send message. Please try again.');
     } finally {
       setSending(false);
     }

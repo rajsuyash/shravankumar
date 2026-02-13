@@ -5,6 +5,7 @@ import { Icon, Button, SOSButton } from '../components/ui';
 import { PilgrimChecklist } from '../components/coordinator/PilgrimChecklist';
 import { useAuth } from '../contexts/AuthContext';
 import { format } from 'date-fns';
+import toast from '../lib/toast';
 
 interface Trip {
   id: string;
@@ -60,7 +61,7 @@ export const TripDetailPage: React.FC = () => {
       setTrip(data);
     } catch (error) {
       console.error('Error fetching trip details:', error);
-      alert('Failed to load trip details');
+      toast.error('Failed to load trip details');
       navigate('/coordinator-dashboard');
     } finally {
       setLoading(false);

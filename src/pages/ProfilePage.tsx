@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Button, Icon, Badge } from '../components/ui';
+import toast from '../lib/toast';
 
 interface PersonalInfo {
   full_name: string;
@@ -200,7 +201,7 @@ export const ProfilePage: React.FC = () => {
       setTimeout(() => setPersonalSaved(false), 3000);
     } catch (error) {
       console.error('Error saving personal info:', error);
-      alert('Failed to save personal information. Please try again.');
+      toast.error('Failed to save personal information. Please try again.');
     } finally {
       setPersonalLoading(false);
     }
@@ -223,7 +224,7 @@ export const ProfilePage: React.FC = () => {
       setEmergencyContacts(contacts);
     } catch (error) {
       console.error('Error saving emergency contacts:', error);
-      alert('Failed to save emergency contacts. Please try again.');
+      toast.error('Failed to save emergency contacts. Please try again.');
     } finally {
       setContactLoading(false);
     }
@@ -231,7 +232,7 @@ export const ProfilePage: React.FC = () => {
 
   const addEmergencyContact = async () => {
     if (!newContact.name || !newContact.phone || !newContact.relationship) {
-      alert('Please fill in name, relationship, and phone number.');
+      toast.info('Please fill in name, relationship, and phone number.');
       return;
     }
     const contact: EmergencyContactEntry = {
@@ -328,7 +329,7 @@ export const ProfilePage: React.FC = () => {
       setTimeout(() => setHealthSaved(false), 3000);
     } catch (error) {
       console.error('Error saving health profile:', error);
-      alert('Failed to save health profile. Please try again.');
+      toast.error('Failed to save health profile. Please try again.');
     } finally {
       setHealthLoading(false);
     }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Icon } from '../ui/Icon';
 import { Button } from '../ui/Button';
+import { NotificationBell } from '../notifications/NotificationBell';
 import { useAuth } from '../../contexts/AuthContext';
 
 export const Header: React.FC = () => {
@@ -36,6 +37,7 @@ export const Header: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {user && <NotificationBell />}
           {user ? (
             <div className="relative">
               <button

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
 import { generateBookingConfirmationPDF, generateItineraryPDF } from '../lib/pdfGenerator';
+import toast from '../lib/toast';
 
 interface TravelerDetail {
   firstName: string;
@@ -88,14 +89,14 @@ export const BookingConfirmationPage: React.FC = () => {
         .maybeSingle();
 
       if (circuitError || !circuitData) {
-        alert('Could not fetch circuit details. Please try again.');
+        toast.error('Could not fetch circuit details. Please try again.');
         return;
       }
 
       generateItineraryPDF(circuitData, booking);
     } catch (error) {
       console.error('Error downloading itinerary:', error);
-      alert('Failed to generate itinerary PDF.');
+      toast.error('Failed to generate itinerary PDF.');
     } finally {
       setDownloadingItinerary(false);
     }

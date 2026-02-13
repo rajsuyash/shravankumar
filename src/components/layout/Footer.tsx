@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from '../ui/Icon';
 
 export const Footer: React.FC = () => {
@@ -17,13 +18,13 @@ export const Footer: React.FC = () => {
             <div className="flex gap-4">
               <a
                 className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-primary transition-colors"
-                href="#"
+                href="mailto:support@shravankumar.com"
               >
                 <Icon name="alternate_email" className="text-sm" />
               </a>
               <a
                 className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-primary transition-colors"
-                href="#"
+                href="tel:+911800000000"
               >
                 <Icon name="call" className="text-sm" />
               </a>
@@ -49,12 +50,12 @@ export const Footer: React.FC = () => {
 
             <div className="flex flex-col gap-4">
               <h4 className="font-bold text-lg">Journeys</h4>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
-                North India
-              </a>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
-                South India
-              </a>
+              <Link className="text-gray-400 text-sm hover:text-white" to="/circuits">
+                Sacred Circuits
+              </Link>
+              <Link className="text-gray-400 text-sm hover:text-white" to="/safety-vows">
+                Safety Vows
+              </Link>
               <a className="text-gray-400 text-sm hover:text-white" href="#">
                 Char Dham
               </a>
@@ -65,24 +66,24 @@ export const Footer: React.FC = () => {
 
             <div className="flex flex-col gap-4">
               <h4 className="font-bold text-lg">Support</h4>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
+              <Link className="text-gray-400 text-sm hover:text-white" to="/safety-vows">
                 Safety Protocols
-              </a>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
-                Help Center
-              </a>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
+              </Link>
+              <Link className="text-gray-400 text-sm hover:text-white" to="/terms">
                 Terms of Service
-              </a>
-              <a className="text-gray-400 text-sm hover:text-white" href="#">
+              </Link>
+              <Link className="text-gray-400 text-sm hover:text-white" to="/privacy-policy">
                 Privacy Policy
-              </a>
+              </Link>
+              <Link className="text-gray-400 text-sm hover:text-white" to="/cancellation-policy">
+                Cancellation Policy
+              </Link>
             </div>
           </div>
         </div>
 
         <div className="border-t border-gray-800 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center text-sm text-gray-500">
-          <p>© 2024 Shravan Kumar Pilgrimages. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} Shravan Kumar Pilgrimages. All rights reserved.</p>
           <p className="mt-2 md:mt-0">Made with devotion in India.</p>
         </div>
       </div>
