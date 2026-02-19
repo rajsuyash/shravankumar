@@ -19,6 +19,19 @@ interface CircuitItem {
   is_active: boolean;
   featured_image_url?: string;
   images?: string[];
+  difficulty_level?: string;
+  medical_surcharge?: number;
+  max_group_size?: number;
+  min_age?: number;
+  starts_from_city?: string;
+  accessibility_rating?: number;
+  itinerary?: { day: number; title: string; activities: string[] }[];
+  included_services?: string[];
+  excluded_services?: string[];
+  accommodation_details?: string;
+  transportation_details?: string;
+  medical_support_details?: string;
+  cancellation_policy?: string;
 }
 
 interface BookingItem {
@@ -38,7 +51,6 @@ interface BookingItem {
 interface UserItem {
   id: string;
   email: string;
-  full_name?: string;
   first_name?: string;
   last_name?: string;
   phone?: string;
@@ -100,7 +112,7 @@ const VENDOR_TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
-type ActiveSection = 'overview' | 'users' | 'vendors' | 'reports' | 'reviews';
+type ActiveSection = 'overview' | 'users' | 'vendors' | 'reports' | 'reviews' | 'trips';
 
 interface ReviewItem {
   id: string;
@@ -110,7 +122,37 @@ interface ReviewItem {
   review_text: string;
   status: string;
   created_at: string;
-  users?: { full_name?: string; email?: string };
+  users?: { first_name?: string; last_name?: string; email?: string };
+  circuits?: { name: string };
+}
+
+interface AdminTrip {
+  id: string;
+  circuit_id: string;
+  departure_date: string;
+  return_date: string;
+  status: string;
+  group_size: number;
+  coordinator_id: string | null;
+  circuits: { name: string; duration_days: number };
+  coordinator?: { first_name?: string; last_name?: string; email: string } | null;
+  bookings: { id: string; booking_reference: string; number_of_travelers: number }[];
+}
+
+interface CoordinatorOption {
+  id: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+}
+
+interface UnlinkedBooking {
+  id: string;
+  booking_reference: string;
+  number_of_travelers: number;
+  departure_date: string;
+  circuit_id: string;
+  customer_id: string;
   circuits?: { name: string };
 }
 
@@ -188,10 +230,23 @@ export const AdminDashboard: React.FC = () => {
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(false);
 
+  // Trip Management state
+  const [adminTrips, setAdminTrips] = useState<AdminTrip[]>([]);
+  const [tripsLoading, setTripsLoading] = useState(false);
+  const [coordinators, setCoordinators] = useState<CoordinatorOption[]>([]);
+  const [isCreateTripModalOpen, setIsCreateTripModalOpen] = useState(false);
+  const [createTripForm, setCreateTripForm] = useState({ circuit_id: '', departure_date: '', coordinator_id: '' });
+  const [creatingTrip, setCreatingTrip] = useState(false);
+  const [isLinkBookingsModalOpen, setIsLinkBookingsModalOpen] = useState(false);
+  const [linkingTripId, setLinkingTripId] = useState<string | null>(null);
+  const [unlinkedBookings, setUnlinkedBookings] = useState<UnlinkedBooking[]>([]);
+  const [selectedBookingIds, setSelectedBookingIds] = useState<string[]>([]);
+  const [linkingBookings, setLinkingBookings] = useState(false);
+
   // Enhanced circuit form fields
   const [circuitTab, setCircuitTab] = useState<'basic' | 'itinerary' | 'services' | 'policies'>('basic');
   const [extendedFormData, setExtendedFormData] = useState({
-    difficulty_level: 'moderate' as string,
+    difficulty_level: 'Moderate' as string,
     medical_surcharge: 0,
     max_group_size: 20,
     min_age: 60,
@@ -260,7 +315,7 @@ export const AdminDashboard: React.FC = () => {
       setUsersLoading(true);
       const { data, error } = await supabase
         .from('users')
-        .select('id, email, full_name, first_name, last_name, phone, user_type, created_at')
+        .select('id, email, first_name, last_name, phone, user_type, created_at')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -412,7 +467,7 @@ export const AdminDashboard: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('reviews')
-        .select('*, users(full_name, email), circuits(name)')
+        .select('*, users(first_name, last_name, email), circuits(name)')
         .order('created_at', { ascending: false });
       if (error) throw error;
       setReviews((data || []) as ReviewItem[]);
@@ -435,6 +490,182 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  // ========== TRIP MANAGEMENT FUNCTIONS ==========
+  const fetchAdminTrips = async () => {
+    try {
+      setTripsLoading(true);
+      const { data, error } = await supabase
+        .from('trips')
+        .select(`
+          *,
+          circuits (name, duration_days),
+          bookings (id, booking_reference, number_of_travelers)
+        `)
+        .order('departure_date', { ascending: false });
+
+      if (error) throw error;
+
+      // Fetch coordinator details separately for each trip that has one
+      const tripsData = data || [];
+      const coordIds = [...new Set(tripsData.filter(t => t.coordinator_id).map(t => t.coordinator_id))];
+      let coordMap: Record<string, { first_name?: string; last_name?: string; email: string }> = {};
+
+      if (coordIds.length > 0) {
+        const { data: coordData } = await supabase
+          .from('users')
+          .select('id, first_name, last_name, email')
+          .in('id', coordIds);
+
+        if (coordData) {
+          coordData.forEach(c => {
+            coordMap[c.id] = { first_name: c.first_name, last_name: c.last_name, email: c.email };
+          });
+        }
+      }
+
+      const enriched: AdminTrip[] = tripsData.map(t => ({
+        ...t,
+        coordinator: t.coordinator_id ? coordMap[t.coordinator_id] || null : null,
+      }));
+
+      setAdminTrips(enriched);
+    } catch (error) {
+      console.error('Error fetching admin trips:', error);
+    } finally {
+      setTripsLoading(false);
+    }
+  };
+
+  const fetchCoordinators = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, email, first_name, last_name')
+        .eq('user_type', 'coordinator')
+        .order('first_name');
+
+      if (error) throw error;
+      setCoordinators(data || []);
+    } catch (error) {
+      console.error('Error fetching coordinators:', error);
+    }
+  };
+
+  const handleAdminCreateTrip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createTripForm.circuit_id || !createTripForm.departure_date) {
+      toast.error('Circuit and departure date are required');
+      return;
+    }
+
+    const selectedCircuit = circuits.find(c => c.id === createTripForm.circuit_id);
+    if (!selectedCircuit) {
+      toast.error('Please select a valid circuit');
+      return;
+    }
+
+    setCreatingTrip(true);
+    try {
+      const returnDate = format(
+        new Date(new Date(createTripForm.departure_date).getTime() + (selectedCircuit.duration_days - 1) * 86400000),
+        'yyyy-MM-dd'
+      );
+
+      const { error } = await supabase.from('trips').insert({
+        circuit_id: createTripForm.circuit_id,
+        departure_date: createTripForm.departure_date,
+        return_date: returnDate,
+        coordinator_id: createTripForm.coordinator_id || null,
+        status: 'planned',
+        group_size: 0,
+      });
+
+      if (error) throw error;
+
+      setIsCreateTripModalOpen(false);
+      setCreateTripForm({ circuit_id: '', departure_date: '', coordinator_id: '' });
+      fetchAdminTrips();
+      toast.success('Trip created successfully!');
+    } catch (error) {
+      console.error('Error creating trip:', error);
+      toast.error('Failed to create trip');
+    } finally {
+      setCreatingTrip(false);
+    }
+  };
+
+  const assignCoordinator = async (tripId: string, coordinatorId: string) => {
+    try {
+      const { error } = await supabase
+        .from('trips')
+        .update({ coordinator_id: coordinatorId || null })
+        .eq('id', tripId);
+
+      if (error) throw error;
+      fetchAdminTrips();
+      toast.success('Coordinator assigned successfully');
+    } catch (error) {
+      console.error('Error assigning coordinator:', error);
+      toast.error('Failed to assign coordinator');
+    }
+  };
+
+  const fetchUnlinkedBookings = async (tripId: string) => {
+    const trip = adminTrips.find(t => t.id === tripId);
+    if (!trip) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('id, booking_reference, number_of_travelers, departure_date, circuit_id, customer_id, circuits (name)')
+        .eq('circuit_id', trip.circuit_id)
+        .eq('booking_status', 'confirmed')
+        .is('trip_id', null);
+
+      if (error) throw error;
+      setUnlinkedBookings((data || []) as UnlinkedBooking[]);
+    } catch (error) {
+      console.error('Error fetching unlinked bookings:', error);
+    }
+  };
+
+  const linkBookingToTrip = async () => {
+    if (!linkingTripId || selectedBookingIds.length === 0) return;
+
+    setLinkingBookings(true);
+    try {
+      const { error } = await supabase
+        .from('bookings')
+        .update({ trip_id: linkingTripId })
+        .in('id', selectedBookingIds);
+
+      if (error) throw error;
+
+      // Update group_size on the trip
+      const trip = adminTrips.find(t => t.id === linkingTripId);
+      const addedTravelers = unlinkedBookings
+        .filter(b => selectedBookingIds.includes(b.id))
+        .reduce((sum, b) => sum + b.number_of_travelers, 0);
+
+      const newGroupSize = (trip?.group_size || 0) + addedTravelers;
+      await supabase
+        .from('trips')
+        .update({ group_size: newGroupSize })
+        .eq('id', linkingTripId);
+
+      setIsLinkBookingsModalOpen(false);
+      setSelectedBookingIds([]);
+      setLinkingTripId(null);
+      fetchAdminTrips();
+      toast.success(`${selectedBookingIds.length} booking(s) linked to trip`);
+    } catch (error) {
+      console.error('Error linking bookings:', error);
+      toast.error('Failed to link bookings');
+    } finally {
+      setLinkingBookings(false);
+    }
+  };
+
   // Load data when section changes
   useEffect(() => {
     if (activeSection === 'users' && users.length === 0) {
@@ -450,6 +681,10 @@ export const AdminDashboard: React.FC = () => {
     if (activeSection === 'reviews' && reviews.length === 0) {
       fetchReviews();
     }
+    if (activeSection === 'trips') {
+      fetchAdminTrips();
+      fetchCoordinators();
+    }
   }, [activeSection]);
 
   // Filter users based on search
@@ -457,7 +692,7 @@ export const AdminDashboard: React.FC = () => {
     if (!userSearchQuery.trim()) return users;
     const q = userSearchQuery.toLowerCase();
     return users.filter((u) => {
-      const name = u.full_name || `${u.first_name || ''} ${u.last_name || ''}`.trim();
+      const name = `${u.first_name || ''} ${u.last_name || ''}`.trim();
       return (
         u.email.toLowerCase().includes(q) ||
         name.toLowerCase().includes(q)
@@ -546,7 +781,7 @@ export const AdminDashboard: React.FC = () => {
         // Create new user record
         const { error } = await supabase.from('users').insert({
           email: staffFormData.email.trim().toLowerCase(),
-          full_name: staffFormData.fullName.trim() || null,
+          first_name: staffFormData.fullName.trim() || null,
           user_type: staffFormData.role,
         });
 
@@ -623,7 +858,6 @@ export const AdminDashboard: React.FC = () => {
 
   // Helper to get display name for a user
   const getUserDisplayName = (user: UserItem): string => {
-    if (user.full_name) return user.full_name;
     const parts = [user.first_name, user.last_name].filter(Boolean);
     return parts.length > 0 ? parts.join(' ') : '--';
   };
@@ -682,6 +916,21 @@ export const AdminDashboard: React.FC = () => {
       is_active: circuit.is_active,
       featured_image_url: circuit.featured_image_url || '',
       images: Array.isArray(circuit.images) ? circuit.images : [],
+    });
+    setExtendedFormData({
+      difficulty_level: circuit.difficulty_level || 'Moderate',
+      medical_surcharge: circuit.medical_surcharge || 0,
+      max_group_size: circuit.max_group_size || 20,
+      min_age: circuit.min_age || 60,
+      starts_from_city: circuit.starts_from_city || '',
+      accessibility_rating: circuit.accessibility_rating || 3,
+      itinerary: Array.isArray(circuit.itinerary) ? circuit.itinerary : [],
+      included_services: Array.isArray(circuit.included_services) ? circuit.included_services : [],
+      excluded_services: Array.isArray(circuit.excluded_services) ? circuit.excluded_services : [],
+      accommodation_details: circuit.accommodation_details || '',
+      transportation_details: circuit.transportation_details || '',
+      medical_support_details: circuit.medical_support_details || '',
+      cancellation_policy: circuit.cancellation_policy || '',
     });
     setFeaturedImageFile(null);
     setAdditionalImageFiles([]);
@@ -916,6 +1165,14 @@ export const AdminDashboard: React.FC = () => {
             <Icon name="rate_review" className="mr-2" />
             Reviews
           </Button>
+          <Button
+            variant={activeSection === 'trips' ? 'primary' : 'secondary'}
+            size="sm"
+            onClick={() => setActiveSection('trips')}
+          >
+            <Icon name="hiking" className="mr-2" />
+            Trips
+          </Button>
         </div>
 
         {/* ========== OVERVIEW SECTION ========== */}
@@ -940,6 +1197,10 @@ export const AdminDashboard: React.FC = () => {
               <Button variant="secondary" size="sm" onClick={() => setActiveSection('reports')}>
                 <Icon name="analytics" className="mr-2" />
                 View Reports
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setActiveSection('trips')}>
+                <Icon name="hiking" className="mr-2" />
+                Manage Trips
               </Button>
             </div>
           </div>
@@ -1635,7 +1896,7 @@ export const AdminDashboard: React.FC = () => {
                             <div className="flex items-start justify-between mb-2">
                               <div>
                                 <p className="font-medium text-[#181410]">
-                                  {review.users?.full_name || review.users?.email || 'Unknown'}
+                                  {[review.users?.first_name, review.users?.last_name].filter(Boolean).join(' ') || review.users?.email || 'Unknown'}
                                 </p>
                                 <p className="text-sm text-gray-500">
                                   {review.circuits?.name || 'Unknown circuit'} &middot;{' '}
@@ -1680,6 +1941,279 @@ export const AdminDashboard: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* ========== TRIPS MANAGEMENT SECTION ========== */}
+        {activeSection === 'trips' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-[#181410]">Trip Management</h2>
+                <p className="text-sm text-gray-600 mt-1">Create trips, assign coordinators, and link bookings</p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" onClick={fetchAdminTrips}>
+                  <Icon name="refresh" className="mr-1" />
+                  Refresh
+                </Button>
+                <Button variant="primary" size="sm" onClick={() => setIsCreateTripModalOpen(true)}>
+                  <Icon name="add" className="mr-1" />
+                  Create Trip
+                </Button>
+              </div>
+            </div>
+
+            {tripsLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Icon name="progress_activity" className="text-4xl text-primary animate-spin" />
+              </div>
+            ) : adminTrips.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 border border-[#e7dfda] text-center">
+                <Icon name="hiking" className="text-gray-300 text-5xl" />
+                <p className="text-gray-400 mt-3">No trips created yet</p>
+                <Button variant="primary" size="sm" className="mt-4" onClick={() => setIsCreateTripModalOpen(true)}>
+                  <Icon name="add" className="mr-1" />
+                  Create First Trip
+                </Button>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-[#e7dfda] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-[#e7dfda]">
+                        <th className="text-left p-4 font-semibold text-gray-700">Circuit</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Dates</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Status</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Coordinator</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Bookings</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Group Size</th>
+                        <th className="text-left p-4 font-semibold text-gray-700">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminTrips.map((trip) => (
+                        <tr key={trip.id} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="p-4 font-medium text-[#181410]">
+                            {trip.circuits?.name || 'Unknown'}
+                          </td>
+                          <td className="p-4 text-gray-600">
+                            {format(new Date(trip.departure_date), 'MMM dd')} - {format(new Date(trip.return_date), 'MMM dd, yyyy')}
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              trip.status === 'in_progress' ? 'bg-green-100 text-green-800' :
+                              trip.status === 'planned' ? 'bg-blue-100 text-blue-800' :
+                              trip.status === 'completed' ? 'bg-gray-100 text-gray-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {trip.status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            <select
+                              value={trip.coordinator_id || ''}
+                              onChange={(e) => assignCoordinator(trip.id, e.target.value)}
+                              className={`text-sm border rounded-lg px-2 py-1 ${
+                                trip.coordinator_id
+                                  ? 'border-gray-300 text-gray-700'
+                                  : 'border-red-300 text-red-600 bg-red-50'
+                              }`}
+                            >
+                              <option value="">Unassigned</option>
+                              {coordinators.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {[c.first_name, c.last_name].filter(Boolean).join(' ') || c.email}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-4 text-gray-600">
+                            {trip.bookings?.length || 0} booking(s)
+                          </td>
+                          <td className="p-4 text-gray-600">
+                            {trip.group_size} pilgrims
+                          </td>
+                          <td className="p-4">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setLinkingTripId(trip.id);
+                                setSelectedBookingIds([]);
+                                fetchUnlinkedBookings(trip.id);
+                                setIsLinkBookingsModalOpen(true);
+                              }}
+                            >
+                              <Icon name="link" className="mr-1" />
+                              Link Bookings
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+      {/* ========== CREATE TRIP MODAL ========== */}
+      {isCreateTripModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full">
+            <div className="border-b border-[#e7dfda] p-6 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-[#181410]">Create New Trip</h2>
+              <button onClick={() => setIsCreateTripModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                <Icon name="close" className="text-2xl" />
+              </button>
+            </div>
+            <form onSubmit={handleAdminCreateTrip} className="p-6 space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Circuit *</label>
+                <select
+                  value={createTripForm.circuit_id}
+                  onChange={(e) => setCreateTripForm({ ...createTripForm, circuit_id: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent bg-white"
+                  required
+                >
+                  <option value="">Select a circuit</option>
+                  {circuits.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.duration_days} days)
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Departure Date *</label>
+                <input
+                  type="date"
+                  value={createTripForm.departure_date}
+                  onChange={(e) => setCreateTripForm({ ...createTripForm, departure_date: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Assign Coordinator (optional)</label>
+                <select
+                  value={createTripForm.coordinator_id}
+                  onChange={(e) => setCreateTripForm({ ...createTripForm, coordinator_id: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent bg-white"
+                >
+                  <option value="">None (assign later)</option>
+                  {coordinators.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {[c.first_name, c.last_name].filter(Boolean).join(' ') || c.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-3 pt-4 border-t border-gray-200">
+                <Button type="button" variant="secondary" onClick={() => setIsCreateTripModalOpen(false)} className="flex-1" disabled={creatingTrip}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" className="flex-1" disabled={creatingTrip}>
+                  {creatingTrip ? (
+                    <span className="flex items-center gap-2">
+                      <Icon name="progress_activity" className="animate-spin" />
+                      Creating...
+                    </span>
+                  ) : (
+                    'Create Trip'
+                  )}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========== LINK BOOKINGS MODAL ========== */}
+      {isLinkBookingsModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[80vh] flex flex-col">
+            <div className="border-b border-[#e7dfda] p-6 flex items-center justify-between">
+              <h2 className="text-2xl font-bold text-[#181410]">Link Bookings to Trip</h2>
+              <button onClick={() => { setIsLinkBookingsModalOpen(false); setLinkingTripId(null); }} className="text-gray-400 hover:text-gray-600">
+                <Icon name="close" className="text-2xl" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              {unlinkedBookings.length === 0 ? (
+                <div className="text-center py-8">
+                  <Icon name="check_circle" className="text-4xl text-green-400 mb-3" />
+                  <p className="text-gray-600">No unlinked confirmed bookings found for this circuit.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-600 mb-4">
+                    Select bookings to link to this trip ({unlinkedBookings.length} available):
+                  </p>
+                  {unlinkedBookings.map((booking) => (
+                    <label
+                      key={booking.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        selectedBookingIds.includes(booking.id)
+                          ? 'border-primary bg-primary/5'
+                          : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedBookingIds.includes(booking.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedBookingIds([...selectedBookingIds, booking.id]);
+                          } else {
+                            setSelectedBookingIds(selectedBookingIds.filter(id => id !== booking.id));
+                          }
+                        }}
+                        className="w-4 h-4 text-primary rounded"
+                      />
+                      <div className="flex-1">
+                        <p className="font-medium text-[#181410]">{booking.booking_reference}</p>
+                        <p className="text-xs text-gray-500">
+                          {booking.number_of_travelers} traveler(s) &middot; Departs {format(new Date(booking.departure_date), 'MMM dd, yyyy')}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            {unlinkedBookings.length > 0 && (
+              <div className="border-t border-gray-200 p-6 flex gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => { setIsLinkBookingsModalOpen(false); setLinkingTripId(null); }}
+                  className="flex-1"
+                  disabled={linkingBookings}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  className="flex-1"
+                  disabled={selectedBookingIds.length === 0 || linkingBookings}
+                  onClick={linkBookingToTrip}
+                >
+                  {linkingBookings ? (
+                    <span className="flex items-center gap-2">
+                      <Icon name="progress_activity" className="animate-spin" />
+                      Linking...
+                    </span>
+                  ) : (
+                    `Link ${selectedBookingIds.length} Booking(s)`
+                  )}
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ========== ADD STAFF MODAL ========== */}
       {isAddStaffModalOpen && (
@@ -2036,9 +2570,9 @@ export const AdminDashboard: React.FC = () => {
                             onChange={(e) => setExtendedFormData({ ...extendedFormData, difficulty_level: e.target.value })}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
                           >
-                            <option value="easy">Easy</option>
-                            <option value="moderate">Moderate</option>
-                            <option value="challenging">Challenging</option>
+                            <option value="Easy">Easy</option>
+                            <option value="Moderate">Moderate</option>
+                            <option value="Challenging">Challenging</option>
                           </select>
                         </div>
                         <div>

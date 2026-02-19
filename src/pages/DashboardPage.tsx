@@ -35,6 +35,7 @@ interface Booking {
   payment_status: string;
   booking_status: string;
   traveler_details: TravelerDetail[];
+  trip_id?: string | null;
   circuits: {
     name: string;
     duration_days: number;
@@ -725,6 +726,19 @@ export const DashboardPage: React.FC = () => {
                             >
                               <Icon name="location_on" className="mr-1" />
                               Track Trip
+                            </Button>
+                          )}
+                          {booking.trip_id && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/my-trip-updates?bookingId=${booking.id}`);
+                              }}
+                            >
+                              <Icon name="photo_library" className="mr-1" />
+                              Trip Updates
                             </Button>
                           )}
                           {booking.booking_status === 'completed' && (

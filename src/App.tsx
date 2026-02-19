@@ -34,6 +34,7 @@ const TermsPage = React.lazy(() => import('./pages/TermsPage').then(m => ({ defa
 const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
 const CancellationPolicyPage = React.lazy(() => import('./pages/CancellationPolicyPage').then(m => ({ default: m.CancellationPolicyPage })));
 const MedicalDisclosurePage = React.lazy(() => import('./pages/MedicalDisclosurePage').then(m => ({ default: m.MedicalDisclosurePage })));
+const MyTripUpdatesPage = React.lazy(() => import('./pages/MyTripUpdatesPage').then(m => ({ default: m.MyTripUpdatesPage })));
 
 function LoadingSpinner() {
   return (
@@ -88,6 +89,7 @@ function App() {
               <Route path="/trip-detail" element={<ProtectedRoute><TripDetailPage /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
               <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+              <Route path="/my-trip-updates" element={<ProtectedRoute><MyTripUpdatesPage /></ProtectedRoute>} />
               <Route path="/safety-vows" element={<SafetyVowsPage />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />

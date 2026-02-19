@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { Button, Icon } from '../components/ui';
 import { format } from 'date-fns';
 import toast from '../lib/toast';
+import { uploadTripUpdatePhoto } from '../lib/tripUpdateImageUpload';
 
 interface TripUpdate {
   id: string;
@@ -43,7 +44,10 @@ export const TripUpdatesPage: React.FC = () => {
     activity_description: '',
     health_status_summary: '',
     incidents_or_issues: '',
+    current_location: '',
   });
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (tripId) {
@@ -86,29 +90,52 @@ export const TripUpdatesPage: React.FC = () => {
     e.preventDefault();
     if (!tripId || !user) return;
 
+    setSubmitting(true);
     try {
+      // Upload photos first
+      let photoUrls: string[] = [];
+      if (photoFiles.length > 0) {
+        const uploadPromises = photoFiles.map((file) =>
+          uploadTripUpdatePhoto(file, tripId, user.id)
+        );
+        photoUrls = await Promise.all(uploadPromises);
+      }
+
       const { error } = await supabase.from('trip_daily_updates').insert({
         trip_id: tripId,
         date: new Date().toISOString().split('T')[0],
         activity_description: newUpdate.activity_description,
         health_status_summary: newUpdate.health_status_summary,
         incidents_or_issues: newUpdate.incidents_or_issues,
-        photos: [],
+        photos: photoUrls,
         created_by: user.id,
       });
 
       if (error) throw error;
 
+      // Update current location on the trip if provided
+      if (newUpdate.current_location.trim()) {
+        await supabase
+          .from('trips')
+          .update({ current_location_name: newUpdate.current_location.trim() })
+          .eq('id', tripId);
+      }
+
       setNewUpdate({
         activity_description: '',
         health_status_summary: '',
         incidents_or_issues: '',
+        current_location: '',
       });
+      setPhotoFiles([]);
       setShowAddForm(false);
       fetchTripAndUpdates();
+      toast.success('Daily update posted!');
     } catch (error) {
       console.error('Error adding update:', error);
       toast.error('Failed to add update. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -212,11 +239,68 @@ export const TripUpdatesPage: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Icon name="location_on" className="inline mr-1 text-base" />
+                  Current Location
+                </label>
+                <input
+                  type="text"
+                  value={newUpdate.current_location}
+                  onChange={(e) => setNewUpdate({ ...newUpdate, current_location: e.target.value })}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                  placeholder="e.g., Varanasi, Kashi Vishwanath Temple"
+                />
+                <p className="text-xs text-gray-500 mt-1">Updates the trip's current location for families to see</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <Icon name="photo_camera" className="inline mr-1 text-base" />
+                  Photos
+                </label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      setPhotoFiles(Array.from(e.target.files));
+                    }
+                  }}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                />
+                {photoFiles.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {photoFiles.map((file, i) => (
+                      <div key={i} className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded text-xs text-gray-600">
+                        <Icon name="image" className="text-sm" />
+                        {file.name}
+                        <button
+                          type="button"
+                          onClick={() => setPhotoFiles(photoFiles.filter((_, idx) => idx !== i))}
+                          className="text-gray-400 hover:text-red-500 ml-1"
+                        >
+                          <Icon name="close" className="text-sm" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-4">
-                <Button type="submit" variant="primary">
-                  Post Update
+                <Button type="submit" variant="primary" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <Icon name="progress_activity" className="mr-2 animate-spin" />
+                      {photoFiles.length > 0 ? 'Uploading & Posting...' : 'Posting...'}
+                    </>
+                  ) : (
+                    'Post Update'
+                  )}
                 </Button>
-                <Button type="button" variant="secondary" onClick={() => setShowAddForm(false)}>
+                <Button type="button" variant="secondary" onClick={() => setShowAddForm(false)} disabled={submitting}>
                   Cancel
                 </Button>
               </div>
